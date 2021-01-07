@@ -6,6 +6,8 @@
 #SBATCH --cpus-per-task=1
 #SBATCH -o 'logs/%A_%a.log'
 
+set -e
+
 # The first argument to this script is the number of times to run the program
 # specified by the rest of the arguments
 # e.g. bash run.sh 5 '--version' will run `python --version` 5 times.

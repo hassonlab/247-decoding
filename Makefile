@@ -11,10 +11,9 @@ NL = $(words $(LAGS))
 #  Configurable options
 # -----------------------------------------------------------------------------
 
-# Choose the command to run:python runs locally, echo is for debugging, sbatch
+# Choose the command to run: bash runs locally, echo is for debugging, sbatch
 # is for actual running.
 CMD = echo
-CMD = python
 CMD = bash code/run.sh
 CMD = sbatch --array=1-$(NL) code/run.sh
 
@@ -22,10 +21,17 @@ CMD = sbatch --array=1-$(NL) code/run.sh
 SID := 676
 SID := 625
 
+# Choose model hyper parameters
+PARAMS := default
+HYPER_PARAMS :=
+
+PARAMS := borgcls
+HYPER_PARAMS := --batch-size 608 --lr 0.0019 --dropout 0.11 --reg 0.01269 --reg-head 0.0004 --conv-filters 160 --fine-epochs 300 --patience 120 --half-window 15 --n-weight-avg 30
+
 # Choose which modes to run for: production, comprehension, or both.
 MODES := prod comp
-MODES := prod
 MODES := comp
+MODES := prod
 
 # Choose how many jobs to run for each lag. NOTE - one sbatch job runs multiple
 # jobs If sbatch runs 5 in each job, and if LAGX = 2, then you'll get 10 runs
@@ -51,12 +57,13 @@ data-exists:
 
 run-decoding: data-exists
 	for mode in $(MODES); do \
-		$(CMD) 5 \
+		$(CMD) 6 \
 		    code/tfsdec_main.py \
 		    --signal-pickle data/$(SID)_binned_signal.pkl \
 		    --label-pickle data/$(SID)_$${mode}_labels_MWF30.pkl \
 		    --lags $(LAGS) \
-		    --model s_$(SID)-m_$$mode-e_64-u_$(USR); \
+		    $(HYPER_PARAMS) \
+		    --model s_$(SID)-m_$$mode-p_$(PARAMS)-u_$(USR); \
 	done
 
 run-ensemble: data-exists
@@ -64,10 +71,11 @@ run-ensemble: data-exists
 		$(CMD) 1 \
 		    code/tfsdec_main.py \
 		    --signal-pickle data/$(SID)_binned_signal.pkl \
-		    --label-pickle data/$(SID)_prod_labels_MWF30.pkl \
+		    --label-pickle data/$(SID)_$${mode}_labels_MWF30.pkl \
 		    --lags $(LAGS) \
 		    --ensemble \
-		    --model s_$(SID)-m_prod-e_64-u_$(USR); \
+		    $(HYPER_PARAMS) \
+		    --model s_$(SID)-m_$$mode-p_$(PARAMS)-u_$(USR); \
 	done
 
 # -----------------------------------------------------------------------------

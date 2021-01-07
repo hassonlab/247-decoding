@@ -48,20 +48,21 @@ def arg_parser():
     parser.add_argument('--lags', type=int, nargs='+', default=None, help='')
     parser.add_argument('--signal-pickle', type=str, required=True, help='')
     parser.add_argument('--label-pickle', type=str, required=True, help='')
-    parser.add_argument('--half-window', type=int, default=512, help='')
+    parser.add_argument('--half-window', type=int, default=16, help='')
 
     # Training args
     parser.add_argument('--lr', type=float, default=0.01, help='Optimizer learning rate.')
-    parser.add_argument('--batch_size', type=int, default=512, help='Integer or None. Number of samples per gradient update.')
+    parser.add_argument('--batch-size', type=int, default=512, help='Integer or None. Number of samples per gradient update.')
     parser.add_argument('--fine-epochs', type=int, default=1000, help='Integer. Number of epochs to train the model. An epoch is an iteration over the entire x and y data provided.')
     parser.add_argument('--patience', type=int, default=150, help='Number of epochs with no improvement after which training will be stopped.')
-    parser.add_argument('--lm_head', action='store_true', help='NotImplementedError')
+    parser.add_argument('--lm-head', action='store_true', help='NotImplementedError')
     parser.add_argument('--ensemble', action='store_true', help='Use the trained models to create an ensemble. No training is performed.')
+    parser.add_argument('--n-weight-avg', type=int, default=0)
 
     # Model definition
-    parser.add_argument('--conv_filters', type=int, default=128, help='Number of convolutional filters in the model.')
+    parser.add_argument('--conv-filters', type=int, default=128, help='Number of convolutional filters in the model.')
     parser.add_argument('--reg', type=float, default=0.35, help='Float. L2 regularization factor for convolutional layers.')
-    parser.add_argument('--reg_head', type=float, default=0, help='Float. L2 regularization factor for dense head.')
+    parser.add_argument('--reg-head', type=float, default=0, help='Float. L2 regularization factor for dense head.')
     parser.add_argument('--dropout', type=float, default=0.2, help='Float between 0 and 1. Fraction of the input units to drop.')
 
     # Other args
@@ -235,7 +236,7 @@ def get_decoder():
 def extract_signal_from_fold(examples, stitch_index, args):
 
     lag_in_bin_dim = args.lag // 32
-    half_window = args.half_window // 32
+    half_window = args.half_window# // 32
 
     x, w = [], []
     for label in examples:
@@ -362,11 +363,18 @@ if __name__ == '__main__':
                 with redirect_stdout(fp):
                     model2.summary()
 
-            stopper = EarlyStopping(monitor='val_top1',
-                                    mode='max',
-                                    patience=args.patience,
-                                    restore_best_weights=True,
-                                    verbose=args.verbose)
+            callbacks = []
+            if args.patience > 0:
+                stopper = EarlyStopping(monitor='val_top1',
+                                        mode='max',
+                                        patience=args.patience,
+                                        restore_best_weights=True,
+                                        verbose=args.verbose)
+                callbacks.append(stopper)
+
+            if args.n_weight_avg > 0:
+                averager = WeightAverager(args.n_weight_avg, args.patience)
+                callbacks.append(averager)
 
             history = model2.fit(
                 x=x_train,
