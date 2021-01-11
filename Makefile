@@ -39,9 +39,9 @@ MODES := prod
 LAGX := 1
 
 # Choose the lags to run for.
-LAGS := $(shell yes "{-2048..2048..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS := -2048 -1024 -512 0 512 1024 2048
+LAGS := $(shell yes "{-1024..1024..16}" | head -n $(LAGX) | tr '\n' ' ')
 LAGS := 0
+LAGS = $(shell seq -1024 16 1024)
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -54,7 +54,8 @@ data-exists:
 	    [[ -r data/$(SID)_$${mode}_labels_MWF30.pkl ]] || echo "[ERROR] $(SID)_$${mode}_labels_MWF30.pkl does not exist!"; \
 	done
 
-
+# General function to run decoding given the configured parameters above.
+# Note that run.sh will run an ensemble as well.
 run-decoding: data-exists
 	for mode in $(MODES); do \
 		$(CMD) 6 \
@@ -91,8 +92,14 @@ plot:
 	rsync -azp results/plots ~/tigress/
 
 # -----------------------------------------------------------------------------
-#  Debugging targets
+#  Misc. targets
 # -----------------------------------------------------------------------------
+
+# Alternative way to get the data instead of pickling yourself, just download
+# from google cloud and symlink them to the data directory.
+download-data:
+	gsutil -m rsync gs://247-podcast-data/247_pickles /scratch/gpfs/$(USER)/247_pickles
+	ln -sf /scratch/gpfs/$(USER)/247_pickles/* data/
 
 print-lags:
 	@echo number of lags: $(NL)
