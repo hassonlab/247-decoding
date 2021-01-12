@@ -10,15 +10,6 @@ from contextlib import redirect_stdout
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.layers import (Activation, BatchNormalization, Conv1D,
-                                     Dense, Dropout, GlobalMaxPooling1D, Input,
-                                     LayerNormalization, LocallyConnected1D,
-                                     MaxPooling1D, Reshape)
-from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.regularizers import l2
-from tensorflow.keras.utils import to_categorical
 from transformers import TFBertForMaskedLM
 
 from evaluate import evaluate_roc, evaluate_topk
@@ -126,48 +117,48 @@ def pitom(input_shapes, n_classes):
 
     desc = [(args.conv_filters, 3), ('max', 2), (args.conv_filters, 2)]
 
-    input_cnn = Input(shape=input_shapes[0])
+    input_cnn = tf.keras.Input(shape=input_shapes[0])
 
     prev_layer = input_cnn
     for filters, kernel_size in desc:
         if filters == 'max':
-            prev_layer = MaxPooling1D(pool_size=kernel_size,
+            prev_layer = tf.keras.layers.MaxPooling1D(pool_size=kernel_size,
                                       strides=None,
                                       padding='same')(prev_layer)
         else:
             # Add a convolution block
-            prev_layer = Conv1D(filters,
+            prev_layer = tf.keras.layers.Conv1D(filters,
                                 kernel_size,
                                 strides=1,
                                 padding='valid',
                                 use_bias=False,
-                                kernel_regularizer=l2(args.reg),
+                                kernel_regularizer=tf.keras.regularizers.l2(args.reg),
                                 kernel_initializer='glorot_normal')(prev_layer)
-            prev_layer = Activation('relu')(prev_layer)
-            prev_layer = BatchNormalization()(prev_layer)
-            prev_layer = Dropout(args.dropout)(prev_layer)
+            prev_layer = tf.keras.layers.Activation('relu')(prev_layer)
+            prev_layer = tf.keras.layers.BatchNormalization()(prev_layer)
+            prev_layer = tf.keras.layers.Dropout(args.dropout)(prev_layer)
 
     # Add final conv block
-    prev_layer = LocallyConnected1D(
+    prev_layer = tf.keras.layers.LocallyConnected1D(
         filters=args.conv_filters,
         kernel_size=2,
         strides=1,
         padding='valid',
-        kernel_regularizer=l2(args.reg),
+        kernel_regularizer=tf.keras.regularizers.l2(args.reg),
         kernel_initializer='glorot_normal')(prev_layer)
-    prev_layer = BatchNormalization()(prev_layer)
-    prev_layer = Activation('relu')(prev_layer)
+    prev_layer = tf.keras.layers.BatchNormalization()(prev_layer)
+    prev_layer = tf.keras.layers.Activation('relu')(prev_layer)
 
-    cnn_features = GlobalMaxPooling1D()(prev_layer)
+    cnn_features = tf.keras.layers.GlobalMaxPooling1D()(prev_layer)
 
     output = cnn_features
     if n_classes is not None:
-        output = LayerNormalization()(Dense(units=n_classes,
-                                            kernel_regularizer=l2(
-                                                args.reg_head),
-                                            activation='tanh')(cnn_features))
+        output = tf.keras.layers.LayerNormalization()(
+                tf.keras.layers.Dense(units=n_classes,
+                                      kernel_regularizer=tf.keras.regularizers.l2(args.reg_head),
+                                      activation='tanh')(cnn_features))
 
-    model = Model(inputs=input_cnn, outputs=output)
+    model = tf.keras.Model(inputs=input_cnn, outputs=output)
     return model
 
 
@@ -213,13 +204,13 @@ def language_decoder(args):
     lang_decoder = lang_model.mlm
     lang_decoder.trainable = False
 
-    inputs = Input((d_size, ))
-    x = Reshape((1, d_size))(inputs)
+    inputs = tf.keras.Input((d_size, ))
+    x = tf.keras.layers.Reshape((1, d_size))(inputs)
     x = lang_decoder(x)
-    x = Reshape((v_size, ))(x)
+    x = tf.keras.layers.Reshape((v_size, ))(x)
     # x = Lambda(lambda z: tf.gather(z, vocab_indices, axis=-1))(x)
-    x = Activation('softmax')(x)
-    lm_decoder = Model(inputs=inputs, outputs=x)
+    x = tf.keras.layers.Activation('softmax')(x)
+    lm_decoder = tf.keras.Model(inputs=inputs, outputs=x)
     lm_decoder.summary()
     return lm_decoder
 
@@ -228,9 +219,8 @@ def get_decoder():
     if args.lm_head:
         return language_decoder()
     else:
-        return Dense(n_classes,
-                     kernel_regularizer=l2(args.reg_head),
-                     activation='softmax')
+        return tf.keras.layers.Dense(n_classes,
+                                     kernel_regularizer=tf.keras.regularizers.l2(args.reg_head))
 
 
 def extract_signal_from_fold(examples, stitch_index, args):
@@ -327,7 +317,7 @@ if __name__ == '__main__':
               np.unique(y_test).size)
 
         model = pitom([x_train.shape[1:]], n_classes=None)
-        optimizer = Adam(lr=args.lr)
+        optimizer = tf.keras.optimizers.Adam(lr=args.lr)
         model.compile(loss='mse',
                       optimizer=optimizer,
                       metrics=[tf.keras.metrics.CosineSimilarity()])
@@ -345,17 +335,12 @@ if __name__ == '__main__':
 
         # Add the decoder, LM head or just a new layer
         if args.fine_epochs > 0 and not args.ensemble:
-            model2 = Model(inputs=model.input, outputs=get_decoder()(model.output))
+            model2 = tf.keras.Model(inputs=model.input, outputs=get_decoder()(model.output))
             model2.compile(
-                loss='categorical_crossentropy',
+                loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
                 optimizer=optimizer,
                 metrics=[
                     tf.keras.metrics.CategoricalAccuracy(name='top1'),
-                    tf.keras.metrics.TopKCategoricalAccuracy(k=5, name='top5'),
-                    tf.keras.metrics.TopKCategoricalAccuracy(k=10, name='top10'),
-                    tf.keras.metrics.AUC(name='auc'),
-                    tf.keras.metrics.Recall(name='recall'),
-                    tf.keras.metrics.Precision(name='precision')
                 ])
 
             with open(os.path.join(save_dir, 'model2-summary.txt'), 'w') as fp:
@@ -364,7 +349,7 @@ if __name__ == '__main__':
 
             callbacks = []
             if args.patience > 0:
-                stopper = EarlyStopping(monitor='val_top1',
+                stopper = tf.keras.callbacks.EarlyStopping(monitor='val_top1',
                                         mode='max',
                                         patience=args.patience,
                                         restore_best_weights=True,
@@ -377,10 +362,10 @@ if __name__ == '__main__':
 
             history = model2.fit(
                 x=x_train,
-                y=to_categorical(y_train, n_classes),
+                y=tf.keras.utils.to_categorical(y_train, n_classes),
                 epochs=args.fine_epochs,
                 batch_size=args.batch_size,
-                validation_data=[x_dev, to_categorical(y_dev, n_classes)],
+                validation_data=[x_dev, tf.keras.utils.to_categorical(y_dev, n_classes)],
                 callbacks=[stopper],
                 verbose=args.verbose)
 
@@ -418,7 +403,7 @@ if __name__ == '__main__':
             if len(models) == 1:
                 model = models[0]
                 testset = model2.evaluate(x_test,
-                                          to_categorical(y_test, n_classes),
+                                          tf.keras.utils.to_categorical(y_test, n_classes),
                                           verbose=args.verbose)
                 test_result2 = {
                     metric: float(result)
@@ -453,7 +438,7 @@ if __name__ == '__main__':
                 test_i2w = index2word
 
             res = evaluate_topk(predictions,
-                                to_categorical(y_test_pruned,
+                                tf.keras.utils.to_categorical(y_test_pruned,
                                                predictions.shape[1]),
                                 test_i2w,
                                 y_train_freq,
@@ -464,7 +449,7 @@ if __name__ == '__main__':
                                 title=args.model)
 
             res2 = evaluate_roc(predictions,
-                                to_categorical(y_test_pruned,
+                                tf.keras.utils.to_categorical(y_test_pruned,
                                                predictions.shape[1]),
                                 test_i2w,
                                 y_train_freq,
