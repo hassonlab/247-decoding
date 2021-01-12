@@ -391,7 +391,7 @@ if __name__ == '__main__':
                 loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
                 optimizer=optimizer,
                 metrics=[
-                    tf.keras.metrics.CategoricalAccuracy(name='top1'),
+                    tf.keras.metrics.CategoricalAccuracy(name='accuracy'),
                 ])
 
             with open(os.path.join(save_dir, 'model2-summary.txt'), 'w') as fp:
@@ -401,7 +401,7 @@ if __name__ == '__main__':
             callbacks = []
             if args.patience > 0:
                 stopper = tf.keras.callbacks.EarlyStopping(
-                    monitor='val_top1',
+                    monitor='val_accuracy',
                     mode='max',
                     patience=args.patience,
                     restore_best_weights=True,
@@ -477,47 +477,27 @@ if __name__ == '__main__':
                     predictions[j] = model.predict(x_test)
                 predictions = np.average(predictions, axis=0)
 
-            # Prune predictions to only ones that are in w_test,
-            # create a mapping of i2w and recreate y_test.
-            if args.lm_head:
-                test_vocab = sorted(set(w_test))
-                test_indices = [word2index[w] for w in test_vocab]
-                test_w2i = {w: i for i, w in enumerate(test_vocab)}
-                test_i2w = {i: w for w, i in test_w2i.items()}
-
-                predictions = predictions[:, test_indices]
-                y_test_pruned = [test_w2i[w] for w in w_test]
-                y_train_freq = Counter(y_test_pruned)
-            else:
-                y_train_freq = Counter(y_train)
-                y_test_pruned = y_test
-                test_i2w = index2word
+            w_train_freq = Counter(w_train)
+            y_test_1hot = tf.keras.utils.to_categorical(y_test,
+                                                        predictions.shape[1])
 
             res = evaluate_topk(predictions,
-                                tf.keras.utils.to_categorical(
-                                    y_test_pruned, predictions.shape[1]),
-                                test_i2w,
-                                y_train_freq,
-                                f'{save_dir}/',
-                                min_train=0,
-                                prefix='eval_',
-                                suffix=f'-fold_{i}-test',
+                                y_test_1hot,
+                                index2word,
+                                w_train_freq,
+                                save_dir,
+                                prefix='test_',
+                                suffix=f'-d_test-fold_{i}',
                                 title=args.model)
 
             res2 = evaluate_roc(predictions,
-                                tf.keras.utils.to_categorical(
-                                    y_test_pruned, predictions.shape[1]),
-                                test_i2w,
-                                y_train_freq,
+                                y_test_1hot,
+                                index2word,
+                                w_train_freq,
                                 f'{save_dir}/',
                                 min_train=0,
                                 suffix=f'-fold_{i}-test',
                                 title=args.model)
-
-            # Just to check
-            guesses = predictions.argmax(axis=-1)
-            accuracy = (guesses == y_test_pruned).sum() / len(y_test_pruned)
-            res['manual_top1'] = accuracy
 
         # Store final value of each dev metric, then test metrics
         values = {k: float(v[-1]) for k, v in main_history.items()}

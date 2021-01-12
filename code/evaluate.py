@@ -217,74 +217,53 @@ def evaluate_roc(predictions,
 
 def evaluate_topk(predictions,
                   labels,
-                  i2w,
+                  index2word,
                   train_freqs,
                   save_dir,
-                  min_train=10,
                   prefix='',
-                  suffix='',
-                  metadata=None,
-                  title=''):
+                  suffix=''):
     '''
         Evaluate top-k performance of the model. This assumes the activations
         can be interpreted as probabilities.
 
+        TODO: update this documenation
         predictions: (N,n_classes) of activations
         labels: (N,n_classes) of labels
         i2w: mapping from index to word
         train_freqs: Counter object of training labels
     '''
 
-    ranks = []
-
     # Reduce classes to those in test set
     target_classes = np.array(np.sum(labels, axis=0).nonzero())[0]
     predictions = predictions[:, target_classes]
     labels = labels[:, target_classes]
-    i2w = {j: i2w[i] for j, i in enumerate(target_classes)}
+    i2w = {j: index2word[i] for j, i in enumerate(target_classes)}
 
+    ranks = []
+    guesses = []
+    class_freq = defaultdict(int)  # of times a class was in this set
+    class_n_pred = defaultdict(int)  # of times a class was predicted as top1
+    class_n_correct = defaultdict(int)  # of times a class was correctly pred.
     n_examples, n_classes = predictions.shape
 
-    fid = open(save_dir + 'guesses%s.csv' % suffix, 'w')
-
-    class_freq = defaultdict(int)
-    class_n_pred = defaultdict(int)
-    class_n_correct = defaultdict(int)
-    top1_uw, top5_uw, top10_uw = set(), set(), set()
-
-    # Go through each example and calculate its rank and top-k
+    # Go through each example and calculate its rank
     for i in range(n_examples):
         y_true_idx = labels[i].nonzero()[0][0]
         word = i2w[y_true_idx]
 
-        if min_train > 0 and train_freqs[y_true_idx] < min_train:
-            continue
-
-        ex_preds = np.argsort(predictions[i])[::-1]  # example predictions
-        rank = np.where(y_true_idx == ex_preds)[0][0]
+        instance_preds = np.argsort(predictions[i])[::-1]
+        rank = np.where(y_true_idx == instance_preds)[0][0]
         ranks.append(rank)
 
-        fid.write('%s|%d|' % (word, rank))
-        if metadata is not None:
-            fid.write(metadata[i])
-            fid.write('|')
-        fid.write('|'.join(i2w[j] for j in ex_preds[:10]))
-        fid.write('\n')
-
-        if rank == 0:
-            top1_uw.add(ex_preds[0])
-            class_n_correct[ex_preds[0]] += 1
-        elif rank < 5:
-            top5_uw.update(ex_preds[:5])
-        elif rank < 10:
-            top10_uw.update(ex_preds[:10])
-
+        # Update class statistics
         class_freq[y_true_idx] += 1
-        class_n_pred[ex_preds[0]] += 1
+        class_n_pred[instance_preds[0]] += 1
+        if rank == 0:
+            class_n_correct[instance_preds[0]] += 1
 
-    fid.close()
+        guesses.append([word, rank] + [i2w[j] for j in instance_preds[:10]])
+
     n_examples = len(ranks)
-
     ranks = np.array(ranks)
     top1 = sum(ranks == 0) / len(ranks)
     top5 = sum(ranks < 5) / len(ranks)
@@ -292,76 +271,46 @@ def evaluate_topk(predictions,
 
     # Calculate chance levels based on training word frequencies
     labels_flat = np.where(labels == 1)[1]
-    freqs = Counter(labels_flat)
-    freqs = np.array([freqs[i] for i, _ in train_freqs.most_common()])
+    freqs = Counter([i2w[i] for i in labels_flat])
+    freqs = np.array([freqs[w] for w, _ in train_freqs.most_common()])
     freqs = freqs[freqs != 0]
     chances = (freqs / freqs.sum()).cumsum()
 
+    # Why would this happen?
     if len(chances) == 0:
         chances = [0] * 10
     if len(chances) < 10:
         chances = chances.tolist() + [0] * 10
 
-    # Print and write out to a file
-    # if suffix is not None:
-    #     with open(save_dir + 'topk%s.csv' % suffix, 'w') as fout:
-    #         fout.write('word,class,freq_train,freq_ds,n_preds,n_correct\n')
-    #         for i in sorted(train_freqs):
-    #             fout.write('%s,%d,%d,%d,%d,%d\n' % (
-    #                 i2w[i],
-    #                 i,
-    #                 train_freqs[i],
-    #                 class_freq[i],
-    #                 class_n_pred[i],
-    #                 class_n_correct[i],
-    #                 ))
+    # Save additional information
+    if save_dir is not None:
+        # Save top-10 predictions for each instance
+        cols = ['word', 'rank'] + list(range(1, 11))
+        df = pd.DataFrame.from_records(guesses, columns=cols)
+        df.to_csv(f'{save_dir}/topk-predictions{suffix}.csv', index=False)
 
-    # if n_classes <= 100:
-    #     # C[i,j] where class i is the truth and j is the prediction
-    #     y_true = labels
-    #     y_pred = predictions.argmax(axis=-1)
-    #     cm = confusion_matrix(y_true, y_pred, labels=range(n_classes))
-    #     cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-
-    #     freqs = Counter(labels)
-    #     class_names = [i2w[i] + '(%d)' % freqs[i] for i in range(len(i2w))]
-
-    #     # Plot confusion matrix
-    #     fig, ax = plt.subplots(figsize=(18, 18))
-    #     im = ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    #     ax.figure.colorbar(im, ax=ax)
-    #     ax.set(xticks=np.arange(cm.shape[1]),
-    #            yticks=np.arange(cm.shape[0]),
-    #            xticklabels=class_names, yticklabels=class_names,
-    #            title=title,
-    #            ylabel='True label',
-    #            xlabel='Predicted label')
-
-    #     # Rotate the tick labels and set their alignment.
-    #     plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
-    #              rotation_mode="anchor")
-
-    #     thresh = cm.max() / 2.
-    #     for i in range(cm.shape[0]):
-    #         for j in range(cm.shape[1]):
-    #             ax.text(j, i, format(cm[i, j], '.2f'),
-    #                     ha="center", va="center",
-    #                     color="white" if cm[i, j] > thresh else "black")
-    #     fig.tight_layout()
-    #     plt.savefig(save_dir + 'cm%s.png' % suffix)
-    #     plt.close()
+        # Save class metrics
+        class_accuracy = {i: class_n_correct[i] / class_freq[i]
+                          for i in class_freq}
+        records = [(i2w[i],
+                   class_accuracy[i],
+                   train_freqs[i2w[i]],
+                   class_freq[i],
+                   class_n_pred[i],
+                   class_n_correct[i]) for i in range(n_classes)]
+        cols = ['word', 'accuracy', 'freq_train',
+                'freq_ds', 'n_predicted', 'n_correct']
+        df2 = pd.DataFrame.from_records(records, columns=cols)
+        df2.to_csv(f'{save_dir}/topk-classes{suffix}.csv', index=False)
 
     return {
-        prefix + 'top1': top1,
-        prefix + 'top5': top5,
-        prefix + 'top10': top10,
-        prefix + 'top1_chance': chances[0],
-        prefix + 'top5_chance': chances[4],
-        prefix + 'top10_chance': chances[9],
-        prefix + 'top1_n_uniq_correct': len(top1_uw),
-        prefix + 'top5_n_uniq_correct': len(top5_uw),
-        prefix + 'top10_n_uniq_correct': len(top10_uw),
-        prefix + 'n_classes': n_classes,
+        f'{prefix}top1': top1,
+        f'{prefix}top5': top5,
+        f'{prefix}top10': top10,
+        f'{prefix}top1_chance': chances[0],
+        f'{prefix}top5_chance': chances[4],
+        f'{prefix}top10_chance': chances[9],
+        f'{prefix}n_classes': n_classes,
     }
 
 
