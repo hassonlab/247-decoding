@@ -345,7 +345,6 @@ if __name__ == '__main__':
 
         # Add the decoder, LM head or just a new layer
         if args.fine_epochs > 0 and not args.ensemble:
-            print('I am inside fine_epochs')
             model2 = Model(inputs=model.input, outputs=get_decoder()(model.output))
             model2.compile(
                 loss='categorical_crossentropy',
@@ -415,7 +414,7 @@ if __name__ == '__main__':
         # Evaluate classification model
         res, res2 = {}, {}
         if args.lm_head or args.fine_epochs > 0 or loaded_model or args.ensemble:
-            # Evaluate end to end on test set
+            # Evaluate using tensorflow metrics (do we really need this?)
             if len(models) == 1:
                 model = models[0]
                 testset = model2.evaluate(x_test,
@@ -428,7 +427,7 @@ if __name__ == '__main__':
                 test_result.update(test_result2)
                 test_results.append(test_result)
 
-            # Prune predictions to only ones that are in w_test, create a mapping of i2w and recreate y_test.
+            # Get model or ensemble predictions
             if len(models) == 1:
                 predictions = model2.predict(x_test)
             elif len(models) > 1:
@@ -437,6 +436,8 @@ if __name__ == '__main__':
                     predictions[j] = model.predict(x_test)
                 predictions = np.average(predictions, axis=0)
 
+            # Prune predictions to only ones that are in w_test,
+            # create a mapping of i2w and recreate y_test.
             if args.lm_head:
                 test_vocab = sorted(set(w_test))
                 test_indices = [word2index[w] for w in test_vocab]
