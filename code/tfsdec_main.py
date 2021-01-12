@@ -1,10 +1,10 @@
-import uuid
-import glob
 import argparse
+import glob
 import json
 import os
 import pickle
 import random as python_random
+import uuid
 from collections import Counter
 from contextlib import redirect_stdout
 
@@ -42,24 +42,66 @@ def arg_parser():
     parser.add_argument('--half-window', type=int, default=16, help='')
 
     # Training args
-    parser.add_argument('--lr', type=float, default=0.01, help='Optimizer learning rate.')
-    parser.add_argument('--batch-size', type=int, default=512, help='Integer or None. Number of samples per gradient update.')
-    parser.add_argument('--fine-epochs', type=int, default=1000, help='Integer. Number of epochs to train the model. An epoch is an iteration over the entire x and y data provided.')
-    parser.add_argument('--patience', type=int, default=150, help='Number of epochs with no improvement after which training will be stopped.')
-    parser.add_argument('--lm-head', action='store_true', help='NotImplementedError')
-    parser.add_argument('--ensemble', action='store_true', help='Use the trained models to create an ensemble. No training is performed.')
+    parser.add_argument('--lr',
+                        type=float,
+                        default=0.01,
+                        help='Optimizer learning rate.')
+    parser.add_argument('--batch-size',
+                        type=int,
+                        default=512,
+                        help='Integer or None. Number of samples per '
+                             'gradient update.')
+    parser.add_argument('--fine-epochs',
+                        type=int,
+                        default=1000,
+                        help='Integer. Number of epochs to train the model. '
+                             'An epoch is an iteration over the entire x and '
+                             'y data provided.')
+    parser.add_argument('--patience',
+                        type=int,
+                        default=150,
+                        help='Number of epochs with no improvement after '
+                             'which training will be stopped.')
+    parser.add_argument('--lm-head',
+                        action='store_true',
+                        help='NotImplementedError')
+    parser.add_argument('--ensemble',
+                        action='store_true',
+                        help='Use the trained models to create an ensemble. '
+                             'No training is performed.')
     parser.add_argument('--n-weight-avg', type=int, default=0)
 
     # Model definition
-    parser.add_argument('--conv-filters', type=int, default=128, help='Number of convolutional filters in the model.')
-    parser.add_argument('--reg', type=float, default=0.35, help='Float. L2 regularization factor for convolutional layers.')
-    parser.add_argument('--reg-head', type=float, default=0, help='Float. L2 regularization factor for dense head.')
-    parser.add_argument('--dropout', type=float, default=0.2, help='Float between 0 and 1. Fraction of the input units to drop.')
+    parser.add_argument('--conv-filters',
+                        type=int,
+                        default=128,
+                        help='Number of convolutional filters in the model.')
+    parser.add_argument('--reg',
+                        type=float,
+                        default=0.35,
+                        help='Float. L2 regularization factor for '
+                             'convolutional layers.')
+    parser.add_argument('--reg-head',
+                        type=float,
+                        default=0,
+                        help='Float. L2 regularization factor for dense head.')
+    parser.add_argument('--dropout',
+                        type=float,
+                        default=0.2,
+                        help='Float between 0 and 1. Fraction of the input '
+                             'units to drop.')
 
     # Other args
-    parser.add_argument('--model', type=str, default='default-out', help='Name of output directory.')
+    parser.add_argument('--model',
+                        type=str,
+                        default='default-out',
+                        help='Name of output directory.')
     parser.add_argument('--seed', type=int, default=None, help='Random seed.')
-    parser.add_argument('--verbose', type=int, default=2, help='0, 1, or 2. Verbosity mode. 0 = silent, 1 = progress bar, 2 = one line per epoch.')
+    parser.add_argument('--verbose',
+                        type=int,
+                        default=2,
+                        help='0, 1, or 2. Verbosity mode. 0 = silent, '
+                             '1 = progress bar, 2 = one line per epoch.')
 
     args = parser.parse_args()
 
@@ -87,7 +129,9 @@ def load_pickles(args):
     print('Signals pickle info')
     for key in signal_d.keys():
         print(
-            f'key: {key}, \t type: {type(signal_d[key])}, \t shape: {len(signal_d[key])}'
+            f'key: {key}, \t '
+            f'type: {type(signal_d[key])}, \t '
+            f'shape: {len(signal_d[key])}'
         )
 
     assert signal_d['binned_signal'].shape[0] == signal_d['bin_stitch_index'][
@@ -122,18 +166,19 @@ def pitom(input_shapes, n_classes):
     prev_layer = input_cnn
     for filters, kernel_size in desc:
         if filters == 'max':
-            prev_layer = tf.keras.layers.MaxPooling1D(pool_size=kernel_size,
-                                      strides=None,
-                                      padding='same')(prev_layer)
+            prev_layer = tf.keras.layers.MaxPooling1D(
+                pool_size=kernel_size, strides=None,
+                padding='same')(prev_layer)
         else:
             # Add a convolution block
-            prev_layer = tf.keras.layers.Conv1D(filters,
-                                kernel_size,
-                                strides=1,
-                                padding='valid',
-                                use_bias=False,
-                                kernel_regularizer=tf.keras.regularizers.l2(args.reg),
-                                kernel_initializer='glorot_normal')(prev_layer)
+            prev_layer = tf.keras.layers.Conv1D(
+                filters,
+                kernel_size,
+                strides=1,
+                padding='valid',
+                use_bias=False,
+                kernel_regularizer=tf.keras.regularizers.l2(args.reg),
+                kernel_initializer='glorot_normal')(prev_layer)
             prev_layer = tf.keras.layers.Activation('relu')(prev_layer)
             prev_layer = tf.keras.layers.BatchNormalization()(prev_layer)
             prev_layer = tf.keras.layers.Dropout(args.dropout)(prev_layer)
@@ -153,10 +198,10 @@ def pitom(input_shapes, n_classes):
 
     output = cnn_features
     if n_classes is not None:
-        output = tf.keras.layers.LayerNormalization()(
-                tf.keras.layers.Dense(units=n_classes,
-                                      kernel_regularizer=tf.keras.regularizers.l2(args.reg_head),
-                                      activation='tanh')(cnn_features))
+        output = tf.keras.layers.LayerNormalization()(tf.keras.layers.Dense(
+            units=n_classes,
+            kernel_regularizer=tf.keras.regularizers.l2(args.reg_head),
+            activation='tanh')(cnn_features))
 
     model = tf.keras.Model(inputs=input_cnn, outputs=output)
     return model
@@ -165,7 +210,6 @@ def pitom(input_shapes, n_classes):
 class WeightAverager(tf.keras.callbacks.Callback):
     """Averages model weights across training trajectory, starting at
     designated epoch."""
-
     def __init__(self, epoch_count, patience):
         super(WeightAverager, self).__init__()
         self.epoch_count = min(epoch_count, 2 * patience)
@@ -219,14 +263,15 @@ def get_decoder():
     if args.lm_head:
         return language_decoder()
     else:
-        return tf.keras.layers.Dense(n_classes,
-                                     kernel_regularizer=tf.keras.regularizers.l2(args.reg_head))
+        return tf.keras.layers.Dense(
+            n_classes,
+            kernel_regularizer=tf.keras.regularizers.l2(args.reg_head))
 
 
 def extract_signal_from_fold(examples, stitch_index, args):
 
     lag_in_bin_dim = args.lag // 32
-    half_window = args.half_window# // 32
+    half_window = args.half_window  # // 32
 
     x, w = [], []
     for label in examples:
@@ -284,7 +329,8 @@ if __name__ == '__main__':
         print(f'Running fold {i}')
 
         train_fold = [
-            example for example in label_folds if example[f'fold{i}'] == 'train'
+            example for example in label_folds
+            if example[f'fold{i}'] == 'train'
         ]
         dev_fold = [
             example for example in label_folds if example[f'fold{i}'] == 'dev'
@@ -294,12 +340,17 @@ if __name__ == '__main__':
         ]
 
         # Decoding starts here
-        x_train, w_train = extract_signal_from_fold(train_fold, stitch_index, args)
+        x_train, w_train = extract_signal_from_fold(train_fold, stitch_index,
+                                                    args)
         x_dev, w_dev = extract_signal_from_fold(dev_fold, stitch_index, args)
-        x_test, w_test = extract_signal_from_fold(test_fold, stitch_index, args)
+        x_test, w_test = extract_signal_from_fold(test_fold, stitch_index,
+                                                  args)
 
         # Determine indexing
-        word2index = {w: j for j, w in enumerate(sorted(set(w_train.tolist())))}
+        word2index = {
+            w: j
+            for j, w in enumerate(sorted(set(w_train.tolist())))
+        }
         index2word = {j: word for word, j in word2index.items()}
 
         y_train = np.array([word2index[w] for w in w_train])
@@ -311,7 +362,6 @@ if __name__ == '__main__':
         print('X train, dev, test:', x_train.shape, x_dev.shape, x_test.shape)
         print('Y train, dev, test:', y_train.shape, y_dev.shape, y_test.shape)
         print('W train, dev, test:', w_train.shape, w_dev.shape, w_test.shape)
-        # print('Z train, dev, test:', z_train.shape, z_dev.shape, z_test.shape)
         print('n_classes:', n_classes,
               np.unique(y_dev).size,
               np.unique(y_test).size)
@@ -335,7 +385,8 @@ if __name__ == '__main__':
 
         # Add the decoder, LM head or just a new layer
         if args.fine_epochs > 0 and not args.ensemble:
-            model2 = tf.keras.Model(inputs=model.input, outputs=get_decoder()(model.output))
+            model2 = tf.keras.Model(inputs=model.input,
+                                    outputs=get_decoder()(model.output))
             model2.compile(
                 loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
                 optimizer=optimizer,
@@ -349,11 +400,12 @@ if __name__ == '__main__':
 
             callbacks = []
             if args.patience > 0:
-                stopper = tf.keras.callbacks.EarlyStopping(monitor='val_top1',
-                                        mode='max',
-                                        patience=args.patience,
-                                        restore_best_weights=True,
-                                        verbose=args.verbose)
+                stopper = tf.keras.callbacks.EarlyStopping(
+                    monitor='val_top1',
+                    mode='max',
+                    patience=args.patience,
+                    restore_best_weights=True,
+                    verbose=args.verbose)
                 callbacks.append(stopper)
 
             if args.n_weight_avg > 0:
@@ -365,7 +417,10 @@ if __name__ == '__main__':
                 y=tf.keras.utils.to_categorical(y_train, n_classes),
                 epochs=args.fine_epochs,
                 batch_size=args.batch_size,
-                validation_data=[x_dev, tf.keras.utils.to_categorical(y_dev, n_classes)],
+                validation_data=[
+                    x_dev,
+                    tf.keras.utils.to_categorical(y_dev, n_classes)
+                ],
                 callbacks=[stopper],
                 verbose=args.verbose)
 
@@ -403,7 +458,8 @@ if __name__ == '__main__':
             if len(models) == 1:
                 model = models[0]
                 testset = model2.evaluate(x_test,
-                                          tf.keras.utils.to_categorical(y_test, n_classes),
+                                          tf.keras.utils.to_categorical(
+                                              y_test, n_classes),
                                           verbose=args.verbose)
                 test_result2 = {
                     metric: float(result)
@@ -438,8 +494,8 @@ if __name__ == '__main__':
                 test_i2w = index2word
 
             res = evaluate_topk(predictions,
-                                tf.keras.utils.to_categorical(y_test_pruned,
-                                               predictions.shape[1]),
+                                tf.keras.utils.to_categorical(
+                                    y_test_pruned, predictions.shape[1]),
                                 test_i2w,
                                 y_train_freq,
                                 f'{save_dir}/',
@@ -449,8 +505,8 @@ if __name__ == '__main__':
                                 title=args.model)
 
             res2 = evaluate_roc(predictions,
-                                tf.keras.utils.to_categorical(y_test_pruned,
-                                               predictions.shape[1]),
+                                tf.keras.utils.to_categorical(
+                                    y_test_pruned, predictions.shape[1]),
                                 test_i2w,
                                 y_train_freq,
                                 f'{save_dir}/',
@@ -465,7 +521,9 @@ if __name__ == '__main__':
 
         # Store final value of each dev metric, then test metrics
         values = {k: float(v[-1]) for k, v in main_history.items()}
-        values.update({f'test_{metric}': v for metric, v in test_result.items()})
+        values.update(
+            {f'test_{metric}': v
+             for metric, v in test_result.items()})
         values.update(corrs)  # add our metrics
 
         values['n_classes'] = np.unique(y_train).size
