@@ -80,12 +80,9 @@ def best_threshold(X, Y, T, best_x=0, best_y=1):
 
 def evaluate_roc(predictions,
                  labels,
-                 i2w,
+                 index2word,
                  train_freqs,
                  save_dir,
-                 do_plot=True,
-                 given_thresholds=None,
-                 min_train=10,
                  title='',
                  prefix='',
                  suffix=''):
@@ -104,44 +101,41 @@ def evaluate_roc(predictions,
     fprs, tprs = [], []
 
     # Remove classes with no examples.
-    mask = np.sum(labels, axis=0) != 0
-    labels = labels[:, mask]
-    predictions = softmax(predictions[:, mask], axis=-1)
+    target_classes = np.array(np.sum(labels, axis=0).nonzero())[0]
+    labels = labels[:, target_classes]
+    predictions = softmax(predictions[:, target_classes], axis=-1)
     labels_flat = np.where(labels == 1)[1]
+    i2w = {j: index2word[i] for j, i in enumerate(target_classes)}
 
     n_examples, n_classes = predictions.shape
 
     # Go over each class and compute AUC
     for i in range(n_classes):
 
-        train_cnt = train_freqs[i]  # n_examples in training
-        n_true = np.count_nonzero(labels[:, i])  # n_examples in validation
+        word = i2w[i]
+        train_cnt = train_freqs[word]  # n_examples in training
+        n_true = np.count_nonzero(labels[:, i])  # n_examples in dataset
 
-        if train_cnt >= min_train and n_true > 0:
+        # Calculate ROC and AUC
+        probs = predictions[:, i]
+        c_labels = labels[:, i]
+        fpr, tpr, thresh = roc_curve(c_labels, probs)
+        score = auc(fpr, tpr)
+        scores.append(score)
+        rocs[word] = score
 
-            # Calculate ROC and AUC
-            probs = predictions[:, i]
-            c_labels = labels[:, i]
-            fpr, tpr, thresh = roc_curve(c_labels, probs)
-            score = auc(fpr, tpr)
-            scores.append(score)
+        # Save extra info for later
+        fprs.append(fpr)
+        tprs.append(tpr)
+        train_word_freqs.append(train_cnt)
+        test_word_freqs.append(n_true)
 
-            word = i2w[i]
-            rocs[word] = score
+        # Compute confusion matrix for best threshold
+        x, y, threshold = best_threshold(fpr, tpr, thresh)
+        y_pred = probs >= threshold
+        tn, fp, fn, tp = confusion_matrix(c_labels, y_pred).ravel()
 
-            # Save extra info for later
-            fprs.append(fpr)
-            tprs.append(tpr)
-            train_word_freqs.append(train_cnt)
-            test_word_freqs.append(n_true)
-
-            # Compute confusion matrix for best threshold
-            x, y, threshold = best_threshold(fpr, tpr, thresh)
-            y_pred = probs >= threshold
-            tn, fp, fn, tp = confusion_matrix(c_labels, y_pred).ravel()
-
-            lines.append('%s,%3d,%3d,%.3f,%d,%d,%d,%d\n' %
-                         (word, n_true, train_cnt, score, tp, fp, fn, tn))
+        lines.append((word, n_true, train_cnt, score, tp, fp, fn, tn))
 
     # Compute weighted averages
     scores = np.array(scores)
@@ -155,22 +149,21 @@ def evaluate_roc(predictions,
     normed_freqs = test_word_freqs / test_word_freqs.sum()
     test_weighted_avg = (scores * normed_freqs).sum()
 
-    skl_macro = roc_auc_score(labels_flat,
-                              predictions,
-                              average='macro',
-                              multi_class='ovr')
-    skl_weighted = roc_auc_score(labels_flat,
-                                 predictions,
-                                 average='weighted',
-                                 multi_class='ovr')
+    # skl_macro = roc_auc_score(labels_flat,
+    #                           predictions,
+    #                           average='macro',
+    #                           multi_class='ovr')
+    # skl_weighted = roc_auc_score(labels_flat,
+    #                              predictions,
+    #                              average='weighted',
+    #                              multi_class='ovr')
 
     # Write to file
-    with open(save_dir + 'aucs%s.csv' % suffix, 'w') as fout:
-        fout.write('word,n_true,train_cnt,score,tp,fp,fn,tn\n')
-        for line in lines:
-            fout.write(line)
+    if save_dir is not None:
+        cols = 'word,freq_ds,freq_train,rocauc,tp,fp,fn,tn'.split(',')
+        df = pd.DataFrame.from_records(lines, columns=cols)
+        df.to_csv(f'{save_dir}/aucs{suffix}.csv', index=False)
 
-    if do_plot:
         N = scores.size
         # Plot histogram and AUC as a function of num of examples
         _, ax = plt.subplots(1, 1)
@@ -180,7 +173,8 @@ def evaluate_roc(predictions,
         ax.set_title(f'{title} | avg: {test_weighted_avg:.3f} | N = {N}')
         ax.set_yticks(np.arange(0., 1.1, 0.1))
         ax.grid()
-        plt.savefig(save_dir + 'roc-auc-examples.png', bbox_inches='tight')
+        plt.savefig(f'{save_dir}/roc-auc-examples{suffix}.png',
+                    bbox_inches='tight')
         plt.close()
 
         _, ax = plt.subplots(1, 1)
@@ -189,7 +183,7 @@ def evaluate_roc(predictions,
         ax.set_ylabel('# labels')
         ax.set_title(f'{title} | avg: {test_weighted_avg:.3f} | N = {N}')
         ax.set_xticks(np.arange(0., 1., 0.1))
-        plt.savefig(save_dir + 'roc-auc.png', bbox_inches='tight')
+        plt.savefig(f'{save_dir}/roc-auc{suffix}.png', bbox_inches='tight')
         plt.close()
 
         _, ax = plt.subplots(1, 1)
@@ -201,17 +195,15 @@ def evaluate_roc(predictions,
         ax.set_xlabel('False Positive Rate')
         ax.set_ylabel('True Positive Rate')
         ax.set_title(f'{title} | avg: {test_weighted_avg:.3f} | N = {N}')
-        plt.savefig(f'{save_dir}roc-auc-all{suffix}.png', bbox_inches='tight')
+        plt.savefig(f'{save_dir}/roc-auc-all{suffix}.png', bbox_inches='tight')
         plt.close()
 
     return {
-        f'{prefix}rocauc_avg': avg_auc,
+        f'{prefix}rocauc': avg_auc,
         f'{prefix}rocauc_stddev': scores.std(),
-        f'{prefix}rocauc_w_avg': train_weighted_avg,
+        f'{prefix}rocauc_train_w_avg': train_weighted_avg,
         f'{prefix}rocauc_test_w_avg': test_weighted_avg,
         f'{prefix}rocauc_n': scores.size,
-        f'{prefix}skl_rocauc_w_avg': skl_weighted,
-        f'{prefix}skl_rocauc_avg': skl_macro
     }
 
 

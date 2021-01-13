@@ -144,7 +144,7 @@ def load_pickles(args):
     stitch_index.insert(0, 0)
 
     # The first 64 electrodes correspond to the hemisphere of interest
-    signals = signals[:, :64]
+    # signals = signals[:, :64]
     # print(signals.shape)
 
     # The labels have been stemmed using Porter Stemming Algorithm
@@ -487,16 +487,15 @@ if __name__ == '__main__':
                                 w_train_freq,
                                 save_dir,
                                 prefix='test_',
-                                suffix=f'-d_test-fold_{i}',
-                                title=args.model)
+                                suffix=f'-d_test-fold_{i}')
 
             res2 = evaluate_roc(predictions,
                                 y_test_1hot,
                                 index2word,
                                 w_train_freq,
-                                f'{save_dir}/',
-                                min_train=0,
-                                suffix=f'-fold_{i}-test',
+                                save_dir,
+                                prefix='test_',
+                                suffix=f'-d_test-fold_{i}',
                                 title=args.model)
 
         # Store final value of each dev metric, then test metrics
