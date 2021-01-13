@@ -11,10 +11,10 @@ NL = $(words $(LAGS))
 #  Configurable options
 # -----------------------------------------------------------------------------
 
-# Choose the command to run: bash runs locally, echo is for debugging, sbatch
-# is for actual running.
+# Choose the command to run: python runs locally, echo is for debugging, sbatch
+# is for running on SLURM all lags in parallel.
 CMD = echo
-CMD = bash code/run.sh
+CMD = python
 CMD = sbatch --array=1-$(NL) code/run.sh
 
 # Choose the subject to run for
@@ -39,9 +39,9 @@ MODES := prod
 LAGX := 1
 
 # Choose the lags to run for.
-LAGS := $(shell yes "{-1024..1024..16}" | head -n $(LAGX) | tr '\n' ' ')
+LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
 LAGS := 0
-LAGS = $(shell seq -1024 16 1024)
+LAGS = $(shell seq -1024 512 1024)
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -58,7 +58,7 @@ data-exists:
 # Note that run.sh will run an ensemble as well.
 run-decoding: data-exists
 	for mode in $(MODES); do \
-		$(CMD) 6 \
+		$(CMD) \
 		    code/tfsdec_main.py \
 		    --signal-pickle data/$(SID)_binned_signal.pkl \
 		    --label-pickle data/$(SID)_$${mode}_labels_MWF30.pkl \
@@ -69,7 +69,7 @@ run-decoding: data-exists
 
 run-ensemble: data-exists
 	for mode in $(MODES); do \
-		$(CMD) 1 \
+		$(CMD) \
 		    code/tfsdec_main.py \
 		    --signal-pickle data/$(SID)_binned_signal.pkl \
 		    --label-pickle data/$(SID)_$${mode}_labels_MWF30.pkl \
@@ -89,7 +89,6 @@ plot:
 	       "model == 's_625-m_comp-e_64-u_zz' and ensemble == True" \
 	    -x lag \
 	    -y avg_rocauc_test_w_avg
-	rsync -azp results/plots ~/tigress/
 
 # -----------------------------------------------------------------------------
 #  Misc. targets

@@ -8,10 +8,6 @@
 
 set -e
 
-# The first argument to this script is the number of times to run the program
-# specified by the rest of the arguments
-# e.g. bash run.sh 5 '--version' will run `python --version` 5 times.
-
 if [[ "$HOSTNAME" == *"tiger"* ]]
 then
     module load anaconda
@@ -24,12 +20,12 @@ fi
 echo 'Requester:' $USER
 echo 'Node:' $HOSTNAME
 echo "$@"
-for run in $(seq 1 $1); do
+for run in $(seq 1 6); do
     echo 'Run start time:' `date`
-    python "${@:2}"
+    python "$@"
     echo 'Run end time:' `date`
 done
 
 echo 'Ensemble start:' `date`
-python "${@:2}" --ensemble
+python "$@" --ensemble
 echo 'End time:' `date`
