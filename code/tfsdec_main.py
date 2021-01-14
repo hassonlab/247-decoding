@@ -321,12 +321,12 @@ if __name__ == '__main__':
 
     signals, stitch_index, label_folds = load_pickles(args)
     histories = []
-    test_results = []
     fold_results = []
 
     # TODO - do all folds.
     for i in range(5):
         print(f'Running fold {i}')
+        results = {}
 
         train_fold = [
             example for example in label_folds
@@ -366,6 +366,13 @@ if __name__ == '__main__':
               np.unique(y_dev).size,
               np.unique(y_test).size)
 
+        results['n_train'] = x_train.shape[0]
+        results['n_dev'] = x_dev.shape[0]
+        results['n_test'] = x_test.shape[0]
+        results['n_classes'] = np.unique(y_train).size
+        results['n_classes_dev'] = np.unique(y_dev).size
+        results['n_classes_test'] = np.unique(y_test).size
+
         model = pitom([x_train.shape[1:]], n_classes=None)
         optimizer = tf.keras.optimizers.Adam(lr=args.lr)
         model.compile(loss='mse',
@@ -377,9 +384,7 @@ if __name__ == '__main__':
         # -------------------------------------------------------------------------
         # >> Classification training
         # -------------------------------------------------------------------------
-        corrs = {}
-        test_result = {}
-        main_history = {}
+        train_histories = []
         models = []  # len(models) > 1 when using ensemble
         loaded_model = False  # TODO - make an arg appropriately
 
@@ -427,7 +432,10 @@ if __name__ == '__main__':
             model2.save(os.path.join(save_dir, f'model2-fold{i}.h5'))
             models.append(model2)
 
-            main_history.update(history.history)
+            train_histories.append(history.history)
+
+            # Store final value of each dev metric, then test metrics
+            results.update({k: float(v[-1]) for k, v in train_histories[-1].items()})
         elif args.ensemble:
             prev_dir = os.path.dirname(save_dir)
             for fn in glob.glob(f'{prev_dir}/*/model2-fold{i}.h5'):
@@ -438,6 +446,7 @@ if __name__ == '__main__':
                     except Exception as e:
                         print(f'Problem loading model: {e}')
             assert len(models) > 0, f'No trained models found: {prev_dir}'
+            results['n_models'] = len(models)
         else:
             # NOTE - this should not be reached given how we do nonce save_dir
             trained_model_fn = os.path.join(save_dir, f'model2-fold{i}.h5')
@@ -449,24 +458,21 @@ if __name__ == '__main__':
             else:
                 assert False, 'No trained model to load.'
 
-        histories.append(main_history)
+        # -------------------------------------------------------------------------
+        # >> Classification evaluation
+        # -------------------------------------------------------------------------
 
-        # Evaluate classification model
         res, res2 = {}, {}
         if args.lm_head or args.fine_epochs > 0 or loaded_model or args.ensemble:
-            # Evaluate using tensorflow metrics (do we really need this?)
+
+            w_train_freq = Counter(w_train)
+            y_test_1hot = tf.keras.utils.to_categorical(y_test, n_classes)
+
+            # Evaluate using tensorflow metrics
             if len(models) == 1:
                 model = models[0]
-                testset = model2.evaluate(x_test,
-                                          tf.keras.utils.to_categorical(
-                                              y_test, n_classes),
-                                          verbose=args.verbose)
-                test_result2 = {
-                    metric: float(result)
-                    for metric, result in zip(model2.metrics_names, testset)
-                }
-                test_result.update(test_result2)
-                test_results.append(test_result)
+                eval_test = model2.evaluate(x_test, y_test_1hot)
+                results.update({metric: float(value) for metric, value in zip(model2.metrics_names, eval_test)})
 
             # Get model or ensemble predictions
             if len(models) == 1:
@@ -477,9 +483,7 @@ if __name__ == '__main__':
                     predictions[j] = model.predict(x_test)
                 predictions = np.average(predictions, axis=0)
 
-            w_train_freq = Counter(w_train)
-            y_test_1hot = tf.keras.utils.to_categorical(y_test,
-                                                        predictions.shape[1])
+            assert n_classes == predictions.shape[1]
 
             res = evaluate_topk(predictions,
                                 y_test_1hot,
@@ -487,7 +491,8 @@ if __name__ == '__main__':
                                 w_train_freq,
                                 save_dir,
                                 prefix='test_',
-                                suffix=f'-d_test-fold_{i}')
+                                suffix=f'-ds_test-fold_{i}')
+            results.update(res)
 
             res2 = evaluate_roc(predictions,
                                 y_test_1hot,
@@ -495,29 +500,18 @@ if __name__ == '__main__':
                                 w_train_freq,
                                 save_dir,
                                 prefix='test_',
-                                suffix=f'-d_test-fold_{i}',
+                                suffix=f'-ds_test-fold_{i}',
                                 title=args.model)
+            results.update(res2)
 
-        # Store final value of each dev metric, then test metrics
-        values = {k: float(v[-1]) for k, v in main_history.items()}
-        values.update(
-            {f'test_{metric}': v
-             for metric, v in test_result.items()})
-        values.update(corrs)  # add our metrics
-
-        values['n_classes'] = np.unique(y_train).size
-        values['n_classes_dev'] = np.unique(y_dev).size
-        values['n_classes_test'] = np.unique(y_test).size
-        values['n_train'] = x_train.shape[0]
-        values['n_dev'] = x_dev.shape[0]
-        values['n_test'] = x_test.shape[0]
-        values.update(res)
-        values.update(res2)
-
-        fold_results.append(values)
-        print(json.dumps(values, indent=2))
+        print(json.dumps(results, indent=2))
+        fold_results.append(results)
 
     # TODO - plot loss curves
+
+    # -------------------------------------------------------------------------
+    # >> Save results
+    # -------------------------------------------------------------------------
 
     # Save all metrics
     results = {}
@@ -525,6 +519,7 @@ if __name__ == '__main__':
         results[f'avg_{metric}'] = np.mean([tr[metric] for tr in fold_results])
 
     print(json.dumps(results, indent=2))
+    print(args.save_dir)
 
     results['runs'] = fold_results
     results['args'] = vars(args)
