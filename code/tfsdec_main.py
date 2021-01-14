@@ -51,25 +51,25 @@ def arg_parser():
                         type=int,
                         default=512,
                         help='Integer or None. Number of samples per '
-                             'gradient update.')
+                        'gradient update.')
     parser.add_argument('--fine-epochs',
                         type=int,
                         default=1000,
                         help='Integer. Number of epochs to train the model. '
-                             'An epoch is an iteration over the entire x and '
-                             'y data provided.')
+                        'An epoch is an iteration over the entire x and '
+                        'y data provided.')
     parser.add_argument('--patience',
                         type=int,
                         default=150,
                         help='Number of epochs with no improvement after '
-                             'which training will be stopped.')
+                        'which training will be stopped.')
     parser.add_argument('--lm-head',
                         action='store_true',
                         help='NotImplementedError')
     parser.add_argument('--ensemble',
                         action='store_true',
                         help='Use the trained models to create an ensemble. '
-                             'No training is performed.')
+                        'No training is performed.')
     parser.add_argument('--n-weight-avg', type=int, default=0)
 
     # Model definition
@@ -81,7 +81,7 @@ def arg_parser():
                         type=float,
                         default=0.35,
                         help='Float. L2 regularization factor for '
-                             'convolutional layers.')
+                        'convolutional layers.')
     parser.add_argument('--reg-head',
                         type=float,
                         default=0,
@@ -90,7 +90,7 @@ def arg_parser():
                         type=float,
                         default=0.2,
                         help='Float between 0 and 1. Fraction of the input '
-                             'units to drop.')
+                        'units to drop.')
 
     # Other args
     parser.add_argument('--model',
@@ -102,7 +102,7 @@ def arg_parser():
                         type=int,
                         default=2,
                         help='0, 1, or 2. Verbosity mode. 0 = silent, '
-                             '1 = progress bar, 2 = one line per epoch.')
+                        '1 = progress bar, 2 = one line per epoch.')
 
     args = parser.parse_args()
 
@@ -129,11 +129,9 @@ def load_pickles(args):
 
     print('Signals pickle info')
     for key in signal_d.keys():
-        print(
-            f'key: {key}, \t '
-            f'type: {type(signal_d[key])}, \t '
-            f'shape: {len(signal_d[key])}'
-        )
+        print(f'key: {key}, \t '
+              f'type: {type(signal_d[key])}, \t '
+              f'shape: {len(signal_d[key])}')
 
     assert signal_d['binned_signal'].shape[0] == signal_d['bin_stitch_index'][
         -1], 'Error: Incorrect Stitching'
@@ -436,7 +434,9 @@ if __name__ == '__main__':
             train_histories.append(history.history)
 
             # Store final value of each dev metric, then test metrics
-            results.update({k: float(v[-1]) for k, v in train_histories[-1].items()})
+            results.update(
+                {k: float(v[-1])
+                 for k, v in train_histories[-1].items()})
         elif args.ensemble:
             prev_dir = os.path.dirname(save_dir)
             for fn in glob.glob(f'{prev_dir}/*/model2-fold{i}.h5'):
@@ -473,7 +473,10 @@ if __name__ == '__main__':
             if len(models) == 1:
                 model = models[0]
                 eval_test = model2.evaluate(x_test, y_test_1hot)
-                results.update({metric: float(value) for metric, value in zip(model2.metrics_names, eval_test)})
+                results.update({
+                    metric: float(value)
+                    for metric, value in zip(model2.metrics_names, eval_test)
+                })
 
             # Get model or ensemble predictions
             if len(models) == 1:
@@ -506,7 +509,14 @@ if __name__ == '__main__':
             results.update(res2)
 
         fold_results.append(results)
-        print(json.dumps({k: v for k, v in results.items() if not isinstance(v, pd.DataFrame)}, indent=2))
+        print(
+            json.dumps(
+                {
+                    k: v
+                    for k, v in results.items()
+                    if not isinstance(v, pd.DataFrame)
+                },
+                indent=2))
 
     # TODO - plot loss curves
 
@@ -524,16 +534,23 @@ if __name__ == '__main__':
     # Save all dataframes. TODO - there's some hard coded stuff in here that
     # needs to change. This whole df feature is probably over engineered.
     dfs = {k: df for k, df in results.items() if isinstance(df, pd.DataFrame)}
-    dfs['avg_test_topk_guesses_df'].to_csv(os.path.join(save_dir, 'avg_test_topk_guesses_df.csv'))
+    dfs['avg_test_topk_guesses_df'].to_csv(
+        os.path.join(save_dir, 'avg_test_topk_guesses_df.csv'))
     merged = dfs['avg_test_topk_df'].merge(dfs['avg_test_rocauc_df'])
     merged = merged.set_index(['word', 'ds', 'fold'])
     merged.to_csv(os.path.join(save_dir, 'avg_test_topk_rocaauc_df.csv'))
 
     # Remove all non-serializable objects
-    for key in [key for key, value in results.items() if isinstance(value, pd.DataFrame)]:
+    for key in [
+            key for key, value in results.items()
+            if isinstance(value, pd.DataFrame)
+    ]:
         del results[key]
     for result in fold_results:
-        for key in [key for key, value in result.items() if isinstance(value, pd.DataFrame)]:
+        for key in [
+                key for key, value in result.items()
+                if isinstance(value, pd.DataFrame)
+        ]:
             del result[key]
 
     # Write out everything
