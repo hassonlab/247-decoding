@@ -173,19 +173,21 @@ def evaluate_roc(predictions,
         ax.set_title(f'{title} | avg: {test_weighted_avg:.3f} | N = {N}')
         ax.set_yticks(np.arange(0., 1.1, 0.1))
         ax.grid()
-        plt.savefig(f'{save_dir}/roc-auc-examples{suffix}.png',
+        plt.savefig(f'{save_dir}/rocauc_examples{suffix}.png',
                     bbox_inches='tight')
         plt.close()
 
+        # Plot a histogram of the AUCs
         _, ax = plt.subplots(1, 1)
         ax.hist(scores, bins=20)
         ax.set_xlabel('AUC')
         ax.set_ylabel('# labels')
         ax.set_title(f'{title} | avg: {test_weighted_avg:.3f} | N = {N}')
         ax.set_xticks(np.arange(0., 1., 0.1))
-        plt.savefig(f'{save_dir}/roc-auc{suffix}.png', bbox_inches='tight')
+        plt.savefig(f'{save_dir}/rocauc_hist{suffix}.png', bbox_inches='tight')
         plt.close()
 
+        # Plot all curves on one plot
         _, ax = plt.subplots(1, 1)
         for fpr, tpr in zip(fprs, tprs):
             ax.plot(fpr, tpr, lw=1, alpha=0.8)
@@ -195,7 +197,7 @@ def evaluate_roc(predictions,
         ax.set_xlabel('False Positive Rate')
         ax.set_ylabel('True Positive Rate')
         ax.set_title(f'{title} | avg: {test_weighted_avg:.3f} | N = {N}')
-        plt.savefig(f'{save_dir}/roc-auc-all{suffix}.png', bbox_inches='tight')
+        plt.savefig(f'{save_dir}/rocauc_all{suffix}.png', bbox_inches='tight')
         plt.close()
 
     return {
