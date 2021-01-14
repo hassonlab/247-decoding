@@ -11,6 +11,7 @@ from contextlib import redirect_stdout
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import matplotlib.pyplot as plt
 from transformers import TFBertForMaskedLM
 
 from evaluate import evaluate_roc, evaluate_topk
@@ -518,7 +519,34 @@ if __name__ == '__main__':
                 },
                 indent=2))
 
-    # TODO - plot loss curves
+    # -------------------------------------------------------------------------
+    # >> Plot training metrics
+    # ------------------------------------------------------------------------
+
+    if len(train_histories) > 0:
+        for metric in train_histories[0]:
+            if 'val' in metric:
+                continue
+
+            plt.figure()
+            for history in train_histories:
+                # Plot train
+                val_train = history[metric][-1]
+                plt.plot(history[metric], label=f'Training: {val_train:.3f}')
+
+                # Plot val
+                val_metric = f'val_{metric}'
+                if val_metric in history:
+                    val_dev = history[val_metric][-1]
+                    plt.plot(history[val_metric], label=f'val: {val_dev:.3f}')
+
+            plt.title(f'{args.model}')
+            plt.xlabel('Epoch')
+            plt.ylabel(f'{metric}')
+            plt.tight_layout()
+            plt.legend()
+            plt.savefig(os.path.join(save_dir, f'epoch-{metric}.png'))
+            plt.close()
 
     # -------------------------------------------------------------------------
     # >> Save results
