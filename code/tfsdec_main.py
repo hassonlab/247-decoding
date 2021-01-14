@@ -9,6 +9,7 @@ from collections import Counter
 from contextlib import redirect_stdout
 
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 from transformers import TFBertForMaskedLM
 
@@ -491,7 +492,7 @@ if __name__ == '__main__':
                                 w_train_freq,
                                 save_dir,
                                 prefix='test_',
-                                suffix=f'-ds_test-fold_{i}')
+                                suffix=f'ds_test-fold_{i}')
             results.update(res)
 
             res2 = evaluate_roc(predictions,
@@ -500,12 +501,12 @@ if __name__ == '__main__':
                                 w_train_freq,
                                 save_dir,
                                 prefix='test_',
-                                suffix=f'-ds_test-fold_{i}',
+                                suffix=f'ds_test-fold_{i}',
                                 title=args.model)
             results.update(res2)
 
-        print(json.dumps(results, indent=2))
         fold_results.append(results)
+        print(json.dumps({k: v for k, v in results.items() if not isinstance(v, pd.DataFrame)}, indent=2))
 
     # TODO - plot loss curves
 
@@ -516,10 +517,27 @@ if __name__ == '__main__':
     # Save all metrics
     results = {}
     for metric in fold_results[0]:
-        results[f'avg_{metric}'] = np.mean([tr[metric] for tr in fold_results])
+        values = [tr[metric] for tr in fold_results]
+        agg = pd.concat if isinstance(values[0], pd.DataFrame) else np.mean
+        results[f'avg_{metric}'] = agg(values)
 
+    # Save all dataframes. TODO - there's some hard coded stuff in here that
+    # needs to change. This whole df feature is probably over engineered.
+    dfs = {k: df for k, df in results.items() if isinstance(df, pd.DataFrame)}
+    dfs['avg_test_topk_guesses_df'].to_csv(os.path.join(save_dir, 'avg_test_topk_guesses_df.csv'))
+    merged = dfs['avg_test_topk_df'].merge(dfs['avg_test_rocauc_df'])
+    merged = merged.set_index(['word', 'ds', 'fold'])
+    merged.to_csv(os.path.join(save_dir, 'avg_test_topk_rocaauc_df.csv'))
+
+    # Remove all non-serializable objects
+    for key in [key for key, value in results.items() if isinstance(value, pd.DataFrame)]:
+        del results[key]
+    for result in fold_results:
+        for key in [key for key, value in result.items() if isinstance(value, pd.DataFrame)]:
+            del result[key]
+
+    # Write out everything
     print(json.dumps(results, indent=2))
-    print(args.save_dir)
 
     results['runs'] = fold_results
     results['args'] = vars(args)

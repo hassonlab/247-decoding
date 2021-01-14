@@ -104,7 +104,6 @@ def evaluate_roc(predictions,
     target_classes = np.array(np.sum(labels, axis=0).nonzero())[0]
     labels = labels[:, target_classes]
     predictions = softmax(predictions[:, target_classes], axis=-1)
-    labels_flat = np.where(labels == 1)[1]
     i2w = {j: index2word[i] for j, i in enumerate(target_classes)}
 
     n_examples, n_classes = predictions.shape
@@ -149,21 +148,16 @@ def evaluate_roc(predictions,
     normed_freqs = test_word_freqs / test_word_freqs.sum()
     test_weighted_avg = (scores * normed_freqs).sum()
 
-    # skl_macro = roc_auc_score(labels_flat,
-    #                           predictions,
-    #                           average='macro',
-    #                           multi_class='ovr')
-    # skl_weighted = roc_auc_score(labels_flat,
-    #                              predictions,
-    #                              average='weighted',
-    #                              multi_class='ovr')
+    cols = 'word,freq_ds,freq_train,rocauc,tp,fp,fn,tn'.split(',')
+    df = pd.DataFrame.from_records(lines, columns=cols)
+    if suffix is not None:
+        extras = {k: v for k, v in [s.split('_') for s in suffix.split('-')]}
+        for key in extras:
+            df[key] = extras[key]
+        df.set_index(['word'] + list(extras.keys()))
 
-    # Write to file
+    # Plot
     if save_dir is not None:
-        cols = 'word,freq_ds,freq_train,rocauc,tp,fp,fn,tn'.split(',')
-        df = pd.DataFrame.from_records(lines, columns=cols)
-        df.to_csv(f'{save_dir}/aucs{suffix}.csv', index=False)
-
         N = scores.size
         # Plot histogram and AUC as a function of num of examples
         _, ax = plt.subplots(1, 1)
@@ -173,7 +167,7 @@ def evaluate_roc(predictions,
         ax.set_title(f'{title} | avg: {test_weighted_avg:.3f} | N = {N}')
         ax.set_yticks(np.arange(0., 1.1, 0.1))
         ax.grid()
-        plt.savefig(f'{save_dir}/rocauc_examples{suffix}.png',
+        plt.savefig(f'{save_dir}/rocauc_examples-{suffix}.png',
                     bbox_inches='tight')
         plt.close()
 
@@ -184,7 +178,7 @@ def evaluate_roc(predictions,
         ax.set_ylabel('# labels')
         ax.set_title(f'{title} | avg: {test_weighted_avg:.3f} | N = {N}')
         ax.set_xticks(np.arange(0., 1., 0.1))
-        plt.savefig(f'{save_dir}/rocauc_hist{suffix}.png', bbox_inches='tight')
+        plt.savefig(f'{save_dir}/rocauc_hist-{suffix}.png', bbox_inches='tight')
         plt.close()
 
         # Plot all curves on one plot
@@ -197,7 +191,7 @@ def evaluate_roc(predictions,
         ax.set_xlabel('False Positive Rate')
         ax.set_ylabel('True Positive Rate')
         ax.set_title(f'{title} | avg: {test_weighted_avg:.3f} | N = {N}')
-        plt.savefig(f'{save_dir}/rocauc_all{suffix}.png', bbox_inches='tight')
+        plt.savefig(f'{save_dir}/rocauc_all-{suffix}.png', bbox_inches='tight')
         plt.close()
 
     return {
@@ -206,6 +200,7 @@ def evaluate_roc(predictions,
         f'{prefix}rocauc_train_w_avg': train_weighted_avg,
         f'{prefix}rocauc_test_w_avg': test_weighted_avg,
         f'{prefix}rocauc_n': scores.size,
+        f'{prefix}rocauc_df': df
     }
 
 
@@ -236,6 +231,7 @@ def evaluate_topk(predictions,
     ranks = []
     guesses = []
     class_freq = defaultdict(int)  # of times a class was in this set
+    class_rank = defaultdict(list)  # rank per class
     class_n_pred = defaultdict(int)  # of times a class was predicted as top1
     class_n_correct = defaultdict(int)  # of times a class was correctly pred.
     n_examples, n_classes = predictions.shape
@@ -251,6 +247,7 @@ def evaluate_topk(predictions,
 
         # Update class statistics
         class_freq[y_true_idx] += 1
+        class_rank[y_true_idx].append(rank)
         class_n_pred[instance_preds[0]] += 1
         if rank == 0:
             class_n_correct[instance_preds[0]] += 1
@@ -276,26 +273,30 @@ def evaluate_topk(predictions,
     if len(chances) < 10:
         chances = chances.tolist() + [0] * 10
 
-    # Save additional information
-    if save_dir is not None:
-        # Save top-10 predictions for each instance
-        cols = ['word', 'rank'] + list(range(1, 11))
-        df = pd.DataFrame.from_records(guesses, columns=cols)
-        df.to_csv(f'{save_dir}/topk-predictions{suffix}.csv', index=False)
+    # Save top-10 predictions for each instance
+    cols = ['word', 'rank'] + list(range(1, 11))
+    df = pd.DataFrame.from_records(guesses, columns=cols)
 
-        # Save class metrics
-        class_accuracy = {i: class_n_correct[i] / class_freq[i]
-                          for i in class_freq}
-        records = [(i2w[i],
-                   class_accuracy[i],
-                   train_freqs[i2w[i]],
-                   class_freq[i],
-                   class_n_pred[i],
-                   class_n_correct[i]) for i in range(n_classes)]
-        cols = ['word', 'accuracy', 'freq_train',
-                'freq_ds', 'n_predicted', 'n_correct']
-        df2 = pd.DataFrame.from_records(records, columns=cols)
-        df2.to_csv(f'{save_dir}/topk-classes{suffix}.csv', index=False)
+    # Save class metrics
+    class_accuracy = {i: class_n_correct[i] / class_freq[i]
+                      for i in class_freq}
+    records = [(i2w[i],
+               np.mean(class_rank[i]),
+               class_accuracy[i],
+               train_freqs[i2w[i]],
+               class_freq[i],
+               class_n_pred[i],
+               class_n_correct[i]) for i in range(n_classes)]
+    cols = ['word', 'avg_rank', 'accuracy', 'freq_train',
+            'freq_ds', 'n_predicted', 'n_correct']
+    df2 = pd.DataFrame.from_records(records, columns=cols)
+
+    if suffix is not None:
+        extras = {k: v for k, v in [s.split('_') for s in suffix.split('-')]}
+        for key in extras:
+            df[key] = extras[key]
+            df2[key] = extras[key]
+        df2.set_index(['word'] + list(extras.keys()))
 
     return {
         f'{prefix}top1': top1,
@@ -305,6 +306,8 @@ def evaluate_topk(predictions,
         f'{prefix}top5_chance': chances[4],
         f'{prefix}top10_chance': chances[9],
         f'{prefix}n_classes': n_classes,
+        f'{prefix}topk_guesses_df': df,
+        f'{prefix}topk_df': df2,
     }
 
 
