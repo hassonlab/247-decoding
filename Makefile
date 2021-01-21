@@ -2,7 +2,6 @@
 # configuration section, then use run-decoding and run-ensemble to train
 # models. Update and run the plot target to create a new plot.
 
-
 # Non-configurable paramters. Don't touch.
 USR := $(shell whoami | head -c 2)
 NL = $(words $(LAGS))
@@ -40,8 +39,8 @@ LAGX := 1
 
 # Choose the lags to run for.
 LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS := 0
 LAGS = $(shell seq -1024 512 1024)
+LAGS := 0
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -94,11 +93,13 @@ plot:
 #  Misc. targets
 # -----------------------------------------------------------------------------
 
-# Alternative way to get the data instead of pickling yourself, just download
-# from google cloud and symlink them to the data directory.
+# If you have pickled the data yourself, then you can just link to it
+link-data:
+	ln -sf $(shell dirname `pwd`)/247-pickling/results/* data/
+
+# Otherwise, you can download it from google cloud bucket
 download-data:
-	gsutil -m rsync gs://247-podcast-data/247_pickles /scratch/gpfs/$(USER)/247_pickles
-	ln -sf /scratch/gpfs/$(USER)/247_pickles/* data/
+	gsutil -m rsync gs://247-podcast-data/247_pickles/ data/
 
 print-lags:
 	@echo number of lags: $(NL)
