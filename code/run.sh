@@ -11,7 +11,7 @@ set -e
 if [[ "$HOSTNAME" == *"tiger"* ]]
 then
     module load anaconda
-    conda activate 247-podcast-tf2
+    conda activate 247-main
 else
     module load anacondapy
     source activate 247-main
