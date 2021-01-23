@@ -39,8 +39,8 @@ LAGX := 1
 
 # Choose the lags to run for.
 LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS = $(shell seq -1024 512 1024)
 LAGS := 0
+LAGS = $(shell seq -1024 512 1024)
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -104,6 +104,18 @@ link-data:
 # Otherwise, you can download it from google cloud bucket
 download-data:
 	gsutil -m rsync gs://247-podcast-data/247_pickles/ data/
+
+
+sync-plots:
+	rsync -aPv \
+	    results/plots/ /tigress/$(USER)/247-decoding-results/plots
+
+sync-results:
+	rsync -aP --include="*/" --include="*.(png|csv|json)" \
+	    results/ /tigress/$(USER)/247-decoding-results
+
+archive-results:
+	rsync -aP results/ /tigress/$(USER)/247-decoding-results
 
 print-lags:
 	@echo number of lags: $(NL)
