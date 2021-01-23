@@ -2,6 +2,7 @@ import glob
 import json
 
 import pandas as pd
+from argparse import ArgumentParser
 
 
 def get_results():
@@ -25,5 +26,9 @@ def get_results():
 
 
 if __name__ == '__main__':
+    parser = ArgumentParser()
+    parser.add_argument('--output', type=str, default='results/aggregate.csv')
+    args = parser.parse_args()
+
     df = get_results()
-    df.to_csv('results/aggregate.csv', index=False)
+    df.to_csv(args.output, index=False)

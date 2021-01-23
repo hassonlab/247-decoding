@@ -29,8 +29,8 @@ HYPER_PARAMS := --batch-size 608 --lr 0.0019 --dropout 0.11 --reg 0.01269 --reg-
 
 # Choose which modes to run for: production, comprehension, or both.
 MODES := prod comp
-MODES := comp
 MODES := prod
+MODES := comp
 
 # Choose how many jobs to run for each lag. NOTE - one sbatch job runs multiple
 # jobs If sbatch runs 5 in each job, and if LAGX = 2, then you'll get 10 runs
@@ -83,11 +83,15 @@ run-ensemble: data-exists
 # -----------------------------------------------------------------------------
 
 plot:
+	mkdir -p results/plots/
 	python code/plot.py \
-	    -q "model == 's_625-m_prod-e_64-u_zz' and ensemble == True" \
-	       "model == 's_625-m_comp-e_64-u_zz' and ensemble == True" \
-	    -x lag \
-	    -y avg_rocauc_test_w_avg
+	    --q "model == 's_625-m_prod-p_borgcls-u_$(USR)' and ensemble == True" \
+	        "model == 's_625-m_comp-p_borgcls-u_$(USR)' and ensemble == True" \
+	    --x lag \
+	    --y avg_test_rocauc
+
+aggregate-results:
+	python code/aggregate_results.py
 
 # -----------------------------------------------------------------------------
 #  Misc. targets
