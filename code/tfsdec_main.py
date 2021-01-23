@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 import matplotlib.pyplot as plt
-from transformers import TFBertForMaskedLM
+import transformers
 
 from evaluate import evaluate_roc, evaluate_topk
 
@@ -240,7 +240,7 @@ class WeightAverager(tf.keras.callbacks.Callback):
 
 # Define language model decoder
 def language_decoder(args):
-    lang_model = TFBertForMaskedLM.from_pretrained(
+    lang_model = transformers.TFBertForMaskedLM.from_pretrained(
         args.model_name, cache_dir='/scratch/gpfs/zzada/cache-tf')
     d_size = lang_model.config.hidden_size
     v_size = lang_model.config.vocab_size
