@@ -499,6 +499,7 @@ if __name__ == '__main__':
                                 suffix=f'ds_test-fold_{i}')
             results.update(res)
 
+
             res2 = evaluate_roc(predictions,
                                 y_test_1hot,
                                 index2word,
