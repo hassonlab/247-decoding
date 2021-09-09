@@ -6,7 +6,7 @@ import pandas as pd
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
 from scipy.special import softmax
-from sklearn.metrics import auc, confusion_matrix, roc_auc_score, roc_curve
+from sklearn.metrics import auc, confusion_matrix, roc_curve
 
 
 def corr(A, B):

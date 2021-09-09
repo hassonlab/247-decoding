@@ -12,25 +12,67 @@ NL = $(words $(LAGS))
 
 # Choose the command to run: python runs locally, echo is for debugging, sbatch
 # is for running on SLURM all lags in parallel.
-CMD = sbatch --array=1-$(NL) code/run.sh
 CMD = echo
 CMD = python
+CMD = sbatch --array=1-$(NL) code/run.sh
 
 # Choose the subject to run for
+SIG_FN :=
 SID := 676
 SID := 625
+
+SID := 777
+SIG_FN := --sig-elec-file data/129-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH.csv
+SIG_FN := --sig-elec-file data/164-phase-5000-sig-elec-gpt2xl50d-perElec-FDR-01-LH.csv
+SIG_FN := --sig-elec-file data/160-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH_newVer.csv
+
+# specify the number of electrodese to be part of the output directory
+NE = 160
 
 # Choose model hyper parameters
 PARAMS := default
 HYPER_PARAMS :=
 
 PARAMS := borgcls
-HYPER_PARAMS := --batch-size 608 --lr 0.0019 --dropout 0.11 --reg 0.01269 --reg-head 0.0004 --conv-filters 160 --fine-epochs 300 --patience 120 --half-window 15 --n-weight-avg 30
+HYPER_PARAMS := --batch-size 608 --lr 0.0019 --dropout 0.11 --reg 0.01269 --reg-head 0.0004 --conv-filters 160 --epochs 300 --patience 120 --half-window 5 --n-weight-avg 30
+PARAMS := vsr
+HYPER_PARAMS := --batch-size 256 --lr .00025 --dropout 0.21 --reg 0.003 --reg-head 0.0005 --conv-filters 160 --epochs 1500 --patience 150 --half-window 5 --n-weight-avg 20
+
+
+MWF := 5
 
 # Choose which modes to run for: production, comprehension, or both.
-MODES := comp
 MODES := prod comp
 MODES := prod
+MODES := comp
+
+# Regression or classification
+MODE := --classify
+MODN := classify
+
+MODE := 
+MODN := regress
+
+# preprocessing options
+PCA := --pca 50
+
+# Choose embedddings
+EMBN = $(EMB)
+EMB := blenderbot-small
+EMB := gpt2-xl
+
+# glove gets special treatment
+EMBN = glove50
+EMBP := --glove
+PCA :=
+
+ALIGN_WITH = --align-with gpt2 blenderbot_small_90M
+ALIGN_WITH = --align-with gpt2
+
+# misc changes
+MISC := --epochs 1
+MISC :=
+
 
 # Ignore. Choose how many jobs to run for each lag. NOTE - one sbatch job runs multiple
 # jobs If sbatch runs 5 in each job, and if LAGX = 2, then you'll get 10 runs
@@ -39,8 +81,13 @@ LAGX := 1
 
 # Choose the lags to run for (512hz).
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS = $(shell seq -1024 256 1024)
-LAGS = 128
+LAGS = $(shell seq -512 64 512)
+# 16 is 1s, 8 is 0.5s, 4 is 0.25s
+LAGS = 4
+LAGS = $(shell seq -16 4 16)
+
+PJCT := tfs
+PJCT := podcast
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -48,23 +95,45 @@ LAGS = 128
 
 # Ensure that data pickles exist before kicking off any jobs
 data-exists:
-	@for mode in $(MODES); do \
-	    [[ -r data/$(SID)/$(SID)_binned_signal.pkl ]] || echo "[ERROR] $(SID)_binned_signal.pkl does not exist!"; \
-	    [[ -r data/$(SID)/$(SID)_$${mode}_labels_MWF30.pkl ]] || echo "[ERROR] $(SID)_$${mode}_labels_MWF30.pkl does not exist!"; \
-	done
+	@[[ -r data/$(PJCT)/$(SID)/pickles/$(SID)_binned_signal.pkl ]] || echo "[ERROR] $(SID)_binned_signal.pkl does not exist!";
+	@[[ -r data/$(PJCT)/$(SID)/pickles/$(SID)_full_labels_MWF_30.pkl ]] || echo "[ERROR] $(SID)_full_labels_MWF30.pkl does not exist!";
 
 # General function to run decoding given the configured parameters above.
 # Note that run.sh will run an ensemble as well.
-run-decoding: data-exists
+run-decoding:
 	for mode in $(MODES); do \
-		$(CMD) \
-		    code/tfsdec_main.py \
-		    --signal-pickle data/$(SID)/$(SID)_binned_signal.pkl \
-		    --label-pickle data/$(SID)/$(SID)_$${mode}_labels_MWF30.pkl \
+	    $(CMD) code/tfsdec_main.py \
+	        --signal-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_binned_signal.pkl \
+	        --label-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_full_$(EMB)_cnxt_1024_embeddings.pkl \
+	        --lags $(LAGS) \
+	        $(HYPER_PARAMS) \
+	        --mode $${mode} \
+		--min-dev-freq $(MWF) --min-test-freq $(MWF) \
+		$(SIG_FN) \
+		$(ALIGN_WITH) \
+	        $(PCA) \
+	        $(MODE) \
+	        $(EMBP) \
+	        $(MISC) \
+	        --model s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF); \
+	done
+
+run-decoding-single:
+	for lag in {1..$(NL)}; do \
+	    for mode in $(MODES); do \
+		python code/tfsdec_main.py \
+		    --lag $${lag} \
+		    --signal-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_binned_signal.pkl \
+		    --label-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_full_$(EMB)_cnxt_1024_embeddings.pkl \
 		    --lags $(LAGS) \
 		    $(HYPER_PARAMS) \
-		    --fine-epochs 1 \
-		    --model s_$(SID)-m_$$mode-p_$(PARAMS)-u_$(USR); \
+		    --mode $${mode} \
+		    $(PCA) \
+		    $(MODE) \
+		    $(EMBP) \
+		    $(MISC) \
+		    --model s-$(SID)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS); \
+	    done; \
 	done
 
 run-ensemble: data-exists
@@ -76,23 +145,38 @@ run-ensemble: data-exists
 		    --lags $(LAGS) \
 		    --ensemble \
 		    $(HYPER_PARAMS) \
-		    --model s_$(SID)-m_$$mode-p_$(PARAMS)-u_$(USR); \
+		    --model s-$(SID)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS); \
 	done
 
 # -----------------------------------------------------------------------------
 # Plotting
 # -----------------------------------------------------------------------------
 
+plots: aggregate-results plot sync-plots
+
+	    # --q "model == 's-777_m-comp_e-glove50_p-borgcls' and ensemble == True and lag >= -512 and lag <= 512" \
+	    #     "model == 's-777_m-comp_e-gpt2-xl_p-borgcls' and ensemble == True and lag >= -512 and lag <= 512"
+	    #     "model == 's-777_t-regress_m-comp_e-blenderbot-small_p-borgcls' and ensemble == True and lag >= -512 and lag <= 512"
+	    #     "model == 's-777_t-regress_m-comp_e-glove50_p-borgcls' and ensemble == True and lag >= -512 and lag <= 512" \
+	    #     "model == 's-777_t-regress_m-comp_e-gpt2-xl_p-borgcls' and ensemble == True and lag >= -512 and lag <= 512" \
+	    #     "model == 's-777_t-regress_m-comp_e-gpt2-xl_p-borgcls_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
+	    #     "model == 's-777_e-164_t-regress_m-comp_e-gpt2-xl_p-borgcls_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
+	    #     "model == 's-777_e-164_t-regress_m-comp_e-gpt2-xl_p-vsr_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
+
 plot:
 	mkdir -p results/plots/
 	python code/plot.py \
-	    --q "model == 's_625-m_prod-p_borgcls-u_$(USR)' and ensemble == True" \
-	        "model == 's_625-m_comp-p_borgcls-u_$(USR)' and ensemble == True" \
+	    --q "model == 's-777_e-160_t-regress_m-comp_e-glove50_p-vsr_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
+	        "model == 's-777_e-160_t-regress_m-comp_e-gpt2-xl_p-vsr_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
+	    --labels glove gpt2 \
 	    --x lag \
-	    --y avg_test_rocauc
+	    --y avg_test_nn_rocauc_test_w_avg \
+	    --output results/plots/s-777_e-160_t-regress_m-comp_e-gg_p-borgcls
 
 aggregate-results:
 	python code/aggregate_results.py
+	cp -f results/aggregate.csv /tigress/zzada/247-decoding-results/
+
 
 # -----------------------------------------------------------------------------
 #  Misc. targets

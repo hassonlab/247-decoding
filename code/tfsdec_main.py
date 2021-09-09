@@ -1,20 +1,24 @@
 import argparse
 import glob
 import json
+import operator
 import os
 import pickle
 import random as python_random
+import string
 import uuid
 from collections import Counter
 from contextlib import redirect_stdout
 
+# import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-import matplotlib.pyplot as plt
 import transformers
+from sklearn.decomposition import PCA
 
-from evaluate import evaluate_roc, evaluate_topk
+from evaluate import (evaluate_embeddings, evaluate_roc, evaluate_topk,
+                      get_class_predictions, get_class_predictions_kd)
 
 
 def set_seed():
@@ -39,11 +43,24 @@ def arg_parser():
     # Data args
     parser.add_argument('--lag', type=int, default=None, help='')
     parser.add_argument('--lags', type=int, nargs='+', default=None, help='')
+    parser.add_argument('--sig-elec-file', default=None)
+    parser.add_argument('--mode',
+                        type=str,
+                        default='prod',
+                        help='[prod]uction or [comp]rehension')
     parser.add_argument('--signal-pickle', type=str, required=True, help='')
     parser.add_argument('--label-pickle', type=str, required=True, help='')
     parser.add_argument('--half-window', type=int, default=16, help='')
+    parser.add_argument('--pca', type=int, default=None, help='')
+    parser.add_argument('--glove', action='store_true')
+    parser.add_argument('--min-word-freq', type=int, default=0)
+    parser.add_argument('--align-with', nargs='*', type=str, default=[])
+    parser.add_argument('--min-dev-freq', type=int, default=-1)
+    parser.add_argument('--min-test-freq', type=int, default=-1)
 
     # Training args
+    parser.add_argument('--classify', action='store_true',
+                        help='If true, run classification and not regression')
     parser.add_argument('--lr',
                         type=float,
                         default=0.01,
@@ -53,7 +70,7 @@ def arg_parser():
                         default=512,
                         help='Integer or None. Number of samples per '
                         'gradient update.')
-    parser.add_argument('--fine-epochs',
+    parser.add_argument('--epochs',
                         type=int,
                         default=1000,
                         help='Integer. Number of epochs to train the model. '
@@ -115,8 +132,35 @@ def arg_parser():
 
             args.lag = args.lags[idx - 1]
             print(f'Using slurm array lag: {args.lag}')
+        elif len(args.lags) == 1:
+            args.lag = args.lags[0]
+        elif len(args.lags) > 1:
+            print('Cannot run more than one lag when not in a job array.')
+            exit(1)
         else:
             args.lag = 0  # default
+    elif args.lags is not None:
+        args.lag = args.lags[args.lag - 1]
+        print(f'Using lag from lags: {args.lag}')
+
+    # Set up save directory
+    taskID = os.environ.get('SLURM_ARRAY_TASK_ID')
+    jobID = os.environ.get('SLURM_ARRAY_JOB_ID')
+    nonce = f'{jobID}-' if jobID is not None else ''
+    nonce += f'{taskID}-' if taskID is not None else ''
+    nonce += uuid.uuid4().hex[:8]
+    nonce = 'ensemble' if args.ensemble else nonce
+
+    save_dir = os.path.join('results', args.model, str(args.lag), nonce)
+    os.makedirs(save_dir, exist_ok=True)
+
+    args.save_dir = save_dir
+    args.task_id = taskID
+    args.job_id = jobID
+    print(args)
+
+    with open(os.path.join(save_dir, 'args.json'), 'w') as fp:
+        json.dump(vars(args), fp, indent=4)
 
     return args
 
@@ -132,22 +176,30 @@ def load_pickles(args):
     for key in signal_d.keys():
         print(f'key: {key}, \t '
               f'type: {type(signal_d[key])}, \t '
-              f'shape: {len(signal_d[key])}')
+              f'len: {len(signal_d[key])}')
 
     assert signal_d['binned_signal'].shape[0] == signal_d['bin_stitch_index'][
         -1], 'Error: Incorrect Stitching'
     assert signal_d['binned_signal'].shape[1] == len(
-        signal_d['electrodes']), 'Error: Incorrect number of electrodes'
+        signal_d['electrode_names']), 'Error: Incorrect number of electrodes'
 
     signals = signal_d['binned_signal']
     stitch_index = signal_d['bin_stitch_index']
     stitch_index.insert(0, 0)
 
-    # The first 64 electrodes correspond to the hemisphere of interest
-    # signals = signals[:, :64]
-    # print(signals.shape)
+    if args.sig_elec_file:
+        elecs = pd.DataFrame(zip(signal_d['subject'],
+                                 signal_d['electrode_names']),
+                             columns=['subject', 'electrode'])
+        elecs['id'] = elecs.index.values
+        elecs.set_index(['subject', 'electrode'], inplace=True)
 
-    # The labels have been stemmed using Porter Stemming Algorithm
+        sigelecs = pd.read_csv(args.sig_elec_file)
+        sigelecs.set_index(['subject', 'electrode'], inplace=True)
+
+        electrodes = sigelecs.join(elecs).id.values
+        signals = signals[..., electrodes]
+        print(f'Using subset of electrodes: {electrodes.size}')
 
     return signals, stitch_index, label_folds
 
@@ -210,6 +262,7 @@ def pitom(input_shapes, n_classes):
 class WeightAverager(tf.keras.callbacks.Callback):
     """Averages model weights across training trajectory, starting at
     designated epoch."""
+
     def __init__(self, epoch_count, patience):
         super(WeightAverager, self).__init__()
         self.epoch_count = min(epoch_count, 2 * patience)
@@ -259,24 +312,29 @@ def language_decoder(args):
     return lm_decoder
 
 
-def get_decoder():
+def get_decoder(args):
     if args.lm_head:
         return language_decoder()
     else:
         return tf.keras.layers.Dense(
-            n_classes,
+            args.n_classes,
             kernel_regularizer=tf.keras.regularizers.l2(args.reg_head))
 
 
-def extract_signal_from_fold(examples, stitch_index, args):
+def extract_signal_from_fold(examples, stitch_index, signals, args):
 
-    lag_in_bin_dim = args.lag // 32
+    lag_in_bin_dim = args.lag # // 32
     half_window = args.half_window  # // 32
 
-    x, w = [], []
+    stitches = np.array(stitch_index)
+    # TODO - binned signal is not what i am expecting it is....
+    # are the onsets correct also?
+
+    skipped = 0
+    x, w, z = [], [], []
     for label in examples:
-        bin_index = label['onset'] // 32
-        bin_rank = (np.array(stitch_index) < bin_index).nonzero()[0][-1]
+        bin_index = int(label['onset'] // 32)
+        bin_rank = (stitches <= bin_index).nonzero()[0][-1]  # NOTE <=
         bin_start = stitch_index[bin_rank]
         bin_stop = stitch_index[bin_rank + 1]
 
@@ -284,275 +342,388 @@ def extract_signal_from_fold(examples, stitch_index, args):
         right_edge = bin_index + lag_in_bin_dim + half_window
 
         if (left_edge < bin_start) or (right_edge > bin_stop):
+            skipped += 1
             continue
         else:
             x.append(signals[left_edge:right_edge, :])
-            w.append(label['word'])
+            w.append(label['label'])
+            z.append(label['embeddings'])
+
+    if skipped > 0:
+        print(f'Skipped {skipped} examples due to boundary conditions')
 
     x = np.stack(x, axis=0)
     w = np.array(w)
+    z = np.array(z)
 
-    return x, w
+    return x, w, z
 
 
-if __name__ == '__main__':
+def get_fold_data(k, df, stitch, X, args):
 
-    set_seed()
-    args = arg_parser()
+    labels = df.to_dict(orient='records')
 
-    # Set up save directory
-    taskID = os.environ.get('SLURM_ARRAY_TASK_ID')
-    jobID = os.environ.get('SLURM_ARRAY_JOB_ID')
-    nonce = f'{jobID}-' if jobID is not None else ''
-    nonce += f'{taskID}-' if taskID is not None else ''
-    nonce += uuid.uuid4().hex[:8]
-    nonce = 'ensemble' if args.ensemble else nonce
+    # Get masks
+    f_train = [ex for ex in labels if ex[f'fold{k}'] == 'train']
+    f_dev = [ex for ex in labels if ex[f'fold{k}'] == 'dev']
+    f_test = [ex for ex in labels if ex[f'fold{k}'] == 'test']
 
-    save_dir = os.path.join('results', args.model, str(args.lag), nonce)
-    os.makedirs(save_dir, exist_ok=True)
+    # Get signal
+    x_train, w_train, z_train = extract_signal_from_fold(
+        f_train, stitch, X, args)
+    x_dev, w_dev, z_dev = extract_signal_from_fold(f_dev, stitch, X, args)
+    x_test, w_test, z_test = extract_signal_from_fold(f_test, stitch, X, args)
 
-    args.save_dir = save_dir
-    args.task_id = taskID
-    args.job_id = jobID
-    print(args)
+    # TODO filter based on freq
+    counter_train = Counter(w_train)
+    if args.min_dev_freq > 0:
+        class_list = set(
+            map(
+                lambda x: x[0],
+                filter(lambda x: x[1] >= args.min_dev_freq,
+                       counter_train.items())))
+        mask = np.array([cls in class_list for cls in w_dev],
+                        dtype=np.bool)
+        x_dev, w_dev, z_dev = x_dev[mask], w_dev[mask], z_dev[mask]
 
-    with open(os.path.join(save_dir, 'args.json'), 'w') as fp:
-        json.dump(vars(args), fp, indent=4)
+    if args.min_test_freq > 0:
+        class_list = set(
+            map(
+                lambda x: x[0],
+                filter(lambda x: x[1] >= args.min_test_freq,
+                       counter_train.items())))
+        mask = np.array([cls in class_list for cls in w_test],
+                        dtype=np.bool)
+        x_test, w_test, z_test = x_test[mask], w_test[mask], z_test[mask]
 
-    signals, stitch_index, label_folds = load_pickles(args)
-    histories = []
-    fold_results = []
+    # Determine indexing
+    # word2index = {w: j for j, w in enumerate(sorted(set(w_train.tolist())))}
+    allwords = w_train.tolist() + w_dev.tolist() + w_test.tolist()
+    word2index = {w: j for j, w in enumerate(sorted(set(allwords)))}
+    y_train = np.array([word2index[w] for w in w_train])
+    y_dev = np.array([word2index[w] for w in w_dev])
+    y_test = np.array([word2index[w] for w in w_test])
 
-    # TODO - do all folds.
-    for i in range(5):
-        print(f'Running fold {i}')
-        results = {}
+    assert x_train.shape[0] == y_train.shape[0] == w_train.shape[
+        0] == z_train.shape[0]
+    assert x_dev.shape[0] == y_dev.shape[0] == w_dev.shape[0] == z_dev.shape[0]
+    assert x_test.shape[0] == y_test.shape[0] == w_test.shape[
+        0] == z_test.shape[0]
 
-        train_fold = [
-            example for example in label_folds
-            if example[f'fold{i}'] == 'train'
-        ]
-        dev_fold = [
-            example for example in label_folds if example[f'fold{i}'] == 'dev'
-        ]
-        test_fold = [
-            example for example in label_folds if example[f'fold{i}'] == 'test'
-        ]
+    results = {}
+    results['n_train'] = x_train.shape[0]
+    results['n_dev'] = x_dev.shape[0]
+    results['n_test'] = x_test.shape[0]
+    results['n_classes'] = np.unique(y_train).size
+    results['n_classes_dev'] = np.unique(y_dev).size
+    results['n_classes_test'] = np.unique(y_test).size
+    print(results)
 
-        # Decoding starts here
-        x_train, w_train = extract_signal_from_fold(train_fold, stitch_index,
-                                                    args)
-        x_dev, w_dev = extract_signal_from_fold(dev_fold, stitch_index, args)
-        x_test, w_test = extract_signal_from_fold(test_fold, stitch_index,
-                                                  args)
+    return ((x_train, x_dev, x_test, w_train, w_dev, w_test, y_train, y_dev,
+             y_test, z_train, z_dev, z_test), word2index, results)
 
-        # Determine indexing
-        word2index = {
-            w: j
-            for j, w in enumerate(sorted(set(w_train.tolist())))
-        }
-        index2word = {j: word for word, j in word2index.items()}
 
-        y_train = np.array([word2index[w] for w in w_train])
-        y_dev = np.array([word2index[w] for w in w_dev])
-        y_test = np.array([word2index[w] for w in w_test])
+def load_trained_models(k, args):
+    models = []
+    prev_dir = os.path.dirname(args.save_dir)
+    for fn in glob.glob(f'{prev_dir}/*/model-fold{k}.h5'):
+        if os.path.isfile(fn):
+            try:
+                models.append(tf.keras.models.load_model(fn))
+                print(f'Loaded {fn}')
+            except Exception as e:
+                print(f'Problem loading model: {e}')
+    assert len(models) > 0, f'No trained models found: {prev_dir}'
+    return models
+    # results['n_models'] = len(models)
 
-        n_classes = np.unique(y_train).size
 
-        print('X train, dev, test:', x_train.shape, x_dev.shape, x_test.shape)
-        print('Y train, dev, test:', y_train.shape, y_dev.shape, y_test.shape)
-        print('W train, dev, test:', w_train.shape, w_dev.shape, w_test.shape)
-        print('n_classes:', n_classes,
-              np.unique(y_dev).size,
-              np.unique(y_test).size)
+def train_regression(x_train, y_train, x_dev, y_dev, args):
+    '''Train a regression model'''
+    model = pitom([x_train.shape[1:]], n_classes=y_train.shape[1])
+    model.compile(loss='mse',
+                  optimizer=tf.keras.optimizers.Adam(lr=args.lr),
+                  metrics=[tf.keras.metrics.CosineSimilarity()])
 
-        results['n_train'] = x_train.shape[0]
-        results['n_dev'] = x_dev.shape[0]
-        results['n_test'] = x_test.shape[0]
-        results['n_classes'] = np.unique(y_train).size
-        results['n_classes_dev'] = np.unique(y_dev).size
-        results['n_classes_test'] = np.unique(y_test).size
+    args.stop_monitor = 'val_cosine_similarity'
+    return train_model(model, x_train, y_train, x_dev, y_dev, args)
 
-        model = pitom([x_train.shape[1:]], n_classes=None)
-        optimizer = tf.keras.optimizers.Adam(lr=args.lr)
-        model.compile(loss='mse',
-                      optimizer=optimizer,
-                      metrics=[tf.keras.metrics.CosineSimilarity()])
 
-        # model.summary()
+def train_classifier(x_train, y_train, x_dev, y_dev, args):
+    '''Train a classifier model'''
+    model = pitom([x_train.shape[1:]], n_classes=None)
+    model = tf.keras.Model(inputs=model.input,
+                           outputs=get_decoder(args)(model.output))
+    model.compile(
+        loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
+        optimizer=tf.keras.optimizers.Adam(lr=args.lr),
+        metrics=[
+            tf.keras.metrics.CategoricalAccuracy(name='accuracy'),
+        ])
 
-        # -------------------------------------------------------------------------
-        # >> Classification training
-        # -------------------------------------------------------------------------
-        train_histories = []
-        models = []  # len(models) > 1 when using ensemble
-        loaded_model = False  # TODO - make an arg appropriately
+    n_classes = args.n_classes
+    y_train = tf.keras.utils.to_categorical(y_train, n_classes)
+    y_dev = tf.keras.utils.to_categorical(y_dev, n_classes)
 
-        # Add the decoder, LM head or just a new layer
-        if args.fine_epochs > 0 and not args.ensemble:
-            model2 = tf.keras.Model(inputs=model.input,
-                                    outputs=get_decoder()(model.output))
-            model2.compile(
-                loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
-                optimizer=optimizer,
-                metrics=[
-                    tf.keras.metrics.CategoricalAccuracy(name='accuracy'),
-                ])
+    args.stop_monitor = 'val_accuracy'
+    return train_model(model, x_train, y_train, x_dev, y_dev, args)
 
-            with open(os.path.join(save_dir, 'model2-summary.txt'), 'w') as fp:
-                with redirect_stdout(fp):
-                    model2.summary()
 
-            callbacks = []
-            if args.patience > 0:
-                stopper = tf.keras.callbacks.EarlyStopping(
-                    monitor='val_accuracy',
-                    mode='max',
-                    patience=args.patience,
-                    restore_best_weights=True,
-                    verbose=args.verbose)
-                callbacks.append(stopper)
+def train_model(model, x_train, y_train, x_dev, y_dev, args):
+    '''Train a model'''
 
-            if args.n_weight_avg > 0:
-                averager = WeightAverager(args.n_weight_avg, args.patience)
-                callbacks.append(averager)
+    # Save model info
+    with open(os.path.join(args.save_dir, 'model-summary.txt'), 'w') as fp:
+        with redirect_stdout(fp):
+            model.summary()
 
-            history = model2.fit(
-                x=x_train,
-                y=tf.keras.utils.to_categorical(y_train, n_classes),
-                epochs=args.fine_epochs,
-                batch_size=args.batch_size,
-                validation_data=[
-                    x_dev,
-                    tf.keras.utils.to_categorical(y_dev, n_classes)
-                ],
-                callbacks=[stopper],
-                verbose=args.verbose)
+    # Set up training parameters
+    callbacks = []
+    if args.patience > 0:
+        stopper = tf.keras.callbacks.EarlyStopping(monitor=args.stop_monitor,
+                                                   mode='max',
+                                                   patience=args.patience,
+                                                   restore_best_weights=True,
+                                                   verbose=args.verbose)
+        callbacks.append(stopper)
 
-            model2.save(os.path.join(save_dir, f'model2-fold{i}.h5'))
-            models.append(model2)
+    if args.n_weight_avg > 0:
+        averager = WeightAverager(args.n_weight_avg, args.patience)
+        callbacks.append(averager)
 
-            train_histories.append(history.history)
+    # Train model and save it
+    history = model.fit(x=x_train,
+                        y=y_train,
+                        epochs=args.epochs,
+                        batch_size=args.batch_size,
+                        validation_data=[x_dev, y_dev],
+                        callbacks=callbacks,
+                        verbose=args.verbose)
+    model.save(os.path.join(args.save_dir, f'model-fold{i}.h5'))
 
-            # Store final value of each dev metric, then test metrics
-            results.update(
-                {k: float(v[-1])
-                 for k, v in train_histories[-1].items()})
-        elif args.ensemble:
-            prev_dir = os.path.dirname(save_dir)
-            for fn in glob.glob(f'{prev_dir}/*/model2-fold{i}.h5'):
-                if os.path.isfile(fn):
-                    try:
-                        models.append(tf.keras.models.load_model(fn))
-                        print(f'Loaded {fn}')
-                    except Exception as e:
-                        print(f'Problem loading model: {e}')
-            assert len(models) > 0, f'No trained models found: {prev_dir}'
-            results['n_models'] = len(models)
+    # Store final value of each metric
+    results = {k: float(v[-1]) for k, v in history.history.items()}
+    return model, results
+
+
+def evaluate_regression(models, w_train, x_test, y_test, z_test, all_data, w2i,
+                        args):
+    '''
+    z_test are embeddings.
+    y_all are all embeddings
+    all_data = (w_all, y_all, z_all)
+    '''
+
+    n_classes = args.n_classes
+
+    # Evaluate using tensorflow metrics
+    results = {}
+    if len(models) == 1:
+        eval_test = models[0].evaluate(x_test, z_test)
+        results.update({
+            metric: float(value)
+            for metric, value in zip(models[0].metrics_names, eval_test)
+        })
+
+    # Compute nearest neighbor performance
+    w_all, y_all, z_all = all_data
+
+    embs = []
+    preds = np.zeros((len(models), len(x_test), n_classes), dtype=np.float64)
+    for j, model in enumerate(models):
+        model_preds = model.predict(x_test)
+        embs.append(model_preds)
+        preds[j] = get_class_predictions(model_preds, z_all, y_all, n_classes)
+
+    # Average all preds
+    if len(models) > 1:
+        preds = np.average(preds, axis=0)
+        embs = np.average(embs, axis=0)
+    else:
+        preds = preds.squeeze()
+        embs = np.array(embs).squeeze()
+
+    # Evaluate embeddding corr
+    results.update(
+        evaluate_embeddings(z_test,
+                            embs,
+                            prefix='test_',
+                            save_dir=args.save_dir,
+                            suffix=f'-fold_{i}'))
+
+    # Evaluate ROC-AUC
+    index2word = {j: word for word, j in w2i.items()}
+    res = evaluate_roc(preds,
+                       tf.keras.utils.to_categorical(y_test, n_classes),
+                       index2word,
+                       Counter(y_train),
+                       args.save_dir,
+                       prefix='test_nn_',
+                       suffix=f'ds_test-fold_{i}')
+    results.update(res)
+
+    # Evaluate top1
+    preds = np.zeros((len(models), len(x_test), n_classes), dtype=np.float64)
+    for j, model in enumerate(models):
+        model_preds = model.predict(x_test)
+        preds[j] = get_class_predictions_kd(model_preds, z_all, y_all,
+                                            n_classes)
+    preds = np.average(preds, axis=0)  # average all predictions
+
+    res = evaluate_topk(preds,
+                        tf.keras.utils.to_categorical(y_test, n_classes),
+                        index2word,
+                        Counter(y_train),
+                        args.save_dir,
+                        prefix='test_nn_',
+                        suffix=f'ds_test-fold_{i}')
+    results.update(res)
+
+    return results
+
+
+def evaluate_classifier(models, w_train, x_test, y_test, w2i, args):
+
+    n_classes = args.n_classes
+    w_train_freq = Counter(w_train)
+    y_test_1hot = tf.keras.utils.to_categorical(y_test, n_classes)
+
+    # Evaluate using tensorflow metrics
+    results = {}
+    if len(models) == 1:
+        eval_test = models[0].evaluate(x_test, y_test_1hot)
+        results.update({
+            metric: float(value)
+            for metric, value in zip(models[0].metrics_names, eval_test)
+        })
+
+    # Get model or ensemble predictions
+    if len(models) == 1:
+        predictions = models[0].predict(x_test)
+    elif len(models) > 1:
+        # ensemble the predictions
+        predictions = np.zeros((len(models), len(x_test), n_classes))
+        for j, model in enumerate(models):
+            predictions[j] = model.predict(x_test)
+        predictions = np.average(predictions, axis=0)
+
+    assert n_classes == predictions.shape[1]
+
+    index2word = {j: word for word, j in w2i.items()}
+    res = evaluate_topk(predictions,
+                        y_test_1hot,
+                        index2word,
+                        w_train_freq,
+                        args.save_dir,
+                        prefix='test_',
+                        suffix=f'ds_test-fold_{i}')
+    results.update(res)
+
+    res2 = evaluate_roc(predictions,
+                        y_test_1hot,
+                        index2word,
+                        w_train_freq,
+                        args.save_dir,
+                        prefix='test_',
+                        suffix=f'ds_test-fold_{i}',
+                        title=args.model)
+    results.update(res2)
+
+    rr = {k: v for k, v in results.items() if not isinstance(v, pd.DataFrame)}
+    print(json.dumps(rr, indent=2))
+    return results
+
+
+def run_pca(df, k=50):
+    pca = PCA(n_components=k, svd_solver='auto')
+
+    df_emb = df['embeddings']
+    pca_output = pca.fit_transform(df_emb.values.tolist())
+    df['embeddings'] = pca_output.tolist()
+
+    return df
+
+
+def create_folds(df, num_folds, split_str=None):
+    """create new columns in the df with the folds labeled
+    Args:
+        args (namespace): namespace object with input arguments
+        df (DataFrame): labels
+    """
+    from sklearn.model_selection import KFold, StratifiedKFold
+
+    def stratify_split(df, num_folds, split_str=None):
+        # Extract only test folds
+        if split_str is None:
+            skf = KFold(n_splits=num_folds, shuffle=False, random_state=0)
+        elif split_str == 'stratify':
+            skf = StratifiedKFold(n_splits=num_folds, shuffle=False)
         else:
-            # NOTE - this should not be reached given how we do nonce save_dir
-            trained_model_fn = os.path.join(save_dir, f'model2-fold{i}.h5')
-            if os.path.isfile(trained_model_fn):
-                print('Loading model!')
-                loaded_model = True
-                model2 = tf.keras.models.load_model(trained_model_fn)
-                models.append(model2)
-            else:
-                assert False, 'No trained model to load.'
+            raise Exception('wrong string')
 
-        # -------------------------------------------------------------------------
-        # >> Classification evaluation
-        # -------------------------------------------------------------------------
+        folds = [t[1] for t in skf.split(df, df.word)]  # on word
+        return folds
 
-        res, res2 = {}, {}
-        if args.lm_head or args.fine_epochs > 0 or loaded_model or args.ensemble:
+    fold_column_names = [f'fold{i}' for i in range(num_folds)]
+    folds = stratify_split(df, num_folds, split_str=split_str)
 
-            w_train_freq = Counter(w_train)
-            y_test_1hot = tf.keras.utils.to_categorical(y_test, n_classes)
+    # Go through each fold, and split
+    for i, fold_col in enumerate(fold_column_names):
+        # Shift the number of folds for this iteration
+        # [0 1 2 3 4] -> [1 2 3 4 0] -> [2 3 4 0 1]
+        #                       ^ dev fold
+        #                         ^ test fold
+        #                 | - | <- train folds
 
-            # Evaluate using tensorflow metrics
-            if len(models) == 1:
-                model = models[0]
-                eval_test = model2.evaluate(x_test, y_test_1hot)
-                results.update({
-                    metric: float(value)
-                    for metric, value in zip(model2.metrics_names, eval_test)
-                })
+        folds_ixs = np.roll(folds, i)
+        *_, dev_ixs, test_ixs = folds_ixs
 
-            # Get model or ensemble predictions
-            if len(models) == 1:
-                predictions = model2.predict(x_test)
-            elif len(models) > 1:
-                predictions = np.zeros((len(models), len(x_test), n_classes))
-                for j, model in enumerate(models):
-                    predictions[j] = model.predict(x_test)
-                predictions = np.average(predictions, axis=0)
+        df[fold_col] = 'train'
+        df.loc[dev_ixs, fold_col] = 'dev'
+        df.loc[test_ixs, fold_col] = 'test'
 
-            assert n_classes == predictions.shape[1]
-
-            res = evaluate_topk(predictions,
-                                y_test_1hot,
-                                index2word,
-                                w_train_freq,
-                                save_dir,
-                                prefix='test_',
-                                suffix=f'ds_test-fold_{i}')
-            results.update(res)
+    return df
 
 
-            res2 = evaluate_roc(predictions,
-                                y_test_1hot,
-                                index2word,
-                                w_train_freq,
-                                save_dir,
-                                prefix='test_',
-                                suffix=f'ds_test-fold_{i}',
-                                title=args.model)
-            results.update(res2)
+def prepare_data(df, args):
+    # Clean up data
+    df = df[~df.token.isin(list(string.punctuation))]
+    df = df[df.onset > 0]
 
-        fold_results.append(results)
-        print(
-            json.dumps(
-                {
-                    k: v
-                    for k, v in results.items()
-                    if not isinstance(v, pd.DataFrame)
-                },
-                indent=2))
+    # Handle glove
+    if args.glove:
+        df['embeddings'] = df['glove50_embeddings']
+    df.drop('glove50_embeddings', axis=1, inplace=True)
 
-    # -------------------------------------------------------------------------
-    # >> Plot training metrics
-    # ------------------------------------------------------------------------
+    # Remove nans
+    df.dropna(axis=0, subset=['embeddings'], inplace=True)
+    df['is_nan'] = df['embeddings'].apply(lambda x: np.isnan(x).all())
+    df = df[~df['is_nan']]
 
-    if len(train_histories) > 0:
-        for metric in train_histories[0]:
-            if 'val' in metric:
-                continue
+    # Run PCA
+    if args.pca is not None:
+        df = run_pca(df, k=args.pca)
 
-            plt.figure()
-            for history in train_histories:
-                # Plot train
-                val_train = history[metric][-1]
-                plt.plot(history[metric], label=f'Training: {val_train:.3f}')
+    # TODO
+    NONWORDS = {'hm', 'huh', 'mhm', 'mm', 'oh', 'uh', 'uhuh', 'um'}
+    common = df.in_glove
+    for model in args.align_with:
+        common = common & df[f'in_{model}']
+    nonword_mask = df.word.str.lower().apply(lambda x: x in NONWORDS)
+    freq_mask = df.word_freq_overall >= args.min_word_freq
+    df = df[common & freq_mask & ~nonword_mask]
+    # df = df[common & freq_mask]  # & ~nonword_mask]
 
-                # Plot val
-                val_metric = f'val_{metric}'
-                if val_metric in history:
-                    val_dev = history[val_metric][-1]
-                    plt.plot(history[val_metric], label=f'val: {val_dev:.3f}')
+    # Keep production or comprehension
+    op = operator.eq if 'prod' in args.mode.lower() else operator.ne
+    df = df[op(df.speaker, 'Speaker1')]
 
-            plt.title(f'{args.model}')
-            plt.xlabel('Epoch')
-            plt.ylabel(f'{metric}')
-            plt.tight_layout()
-            plt.legend()
-            plt.savefig(os.path.join(save_dir, f'epoch-{metric}.png'))
-            plt.close()
+    assert df.size > 0, 'No data left after processing criteria'
 
-    # -------------------------------------------------------------------------
-    # >> Save results
-    # -------------------------------------------------------------------------
+    return df
 
+
+def save_results(fold_results, args):
     # Save all metrics
     results = {}
     for metric in fold_results[0]:
@@ -562,31 +733,109 @@ if __name__ == '__main__':
 
     # Save all dataframes. TODO - there's some hard coded stuff in here that
     # needs to change. This whole df feature is probably over engineered.
-    dfs = {k: df for k, df in results.items() if isinstance(df, pd.DataFrame)}
-    dfs['avg_test_topk_guesses_df'].to_csv(
-        os.path.join(save_dir, 'avg_test_topk_guesses_df.csv'))
-    merged = dfs['avg_test_topk_df'].merge(dfs['avg_test_rocauc_df'])
-    merged = merged.set_index(['word', 'ds', 'fold'])
-    merged.to_csv(os.path.join(save_dir, 'avg_test_topk_rocaauc_df.csv'))
+    # dfs = {k: df for k, df in results.items() if isinstance(df, pd.DataFrame)
+    # dfs['avg_test_topk_guesses_df'].to_csv(
+    #     os.path.join(args.save_dir, 'avg_test_topk_guesses_df.csv'))
+    # merged = dfs['avg_test_topk_df'].merge(dfs['avg_test_rocauc_df'])
+    # merged = merged.set_index(['word', 'ds', 'fold'])
+    # merged.to_csv(os.path.join(args.save_dir, 'avg_test_topk_rocaauc_df.csv')
 
     # Remove all non-serializable objects
-    for key in [
-            key for key, value in results.items()
-            if isinstance(value, pd.DataFrame)
-    ]:
+    bads = [k for k, v in results.items() if isinstance(v, pd.DataFrame)]
+    for key in bads:
         del results[key]
-    for result in fold_results:
-        for key in [
-                key for key, value in result.items()
-                if isinstance(value, pd.DataFrame)
-        ]:
-            del result[key]
+    results = {k: float(v) for k, v in results.items()}
+    print(json.dumps(results, indent=2))
 
     # Write out everything
-    print(json.dumps(results, indent=2))
+    res = fold_results[0]
+    bads = [k for k, v in res.items() if isinstance(v, pd.DataFrame)]
+    for result in fold_results:
+        for key in bads:
+            if key in result and result[key] is not None:
+                del result[key]
+        for k, v in result.items():
+            if type(v) != int or type(v) != float:
+                result[k] = float(v)
 
     results['runs'] = fold_results
     results['args'] = vars(args)
 
-    with open(os.path.join(save_dir, 'results.json'), 'w') as fp:
+    with open(os.path.join(args.save_dir, 'results.json'), 'w') as fp:
         json.dump(results, fp, indent=4)
+
+
+if __name__ == '__main__':
+    set_seed()
+    args = arg_parser()
+
+    # Load data
+    signals, stitch_index, label_folds = load_pickles(args)
+    df = pd.DataFrame(label_folds)
+    df = prepare_data(df, args)
+
+    df['label'] = df.lemmatized_word.str.lower()
+
+    # create folds based on filtered dataset
+    k = 5
+    df = create_folds(df.reset_index(drop=True), k)  # 'stratify')
+
+    # za = set()
+    # for i in range(5):
+    #     za.update(df.word[df[f'fold{i}'] == 'test'].tolist())
+    # words = sorted(za)
+    # breakpoint()
+
+    # Run
+    histories = []
+    fold_results = []
+
+    for i in range(k):
+        print(f'Running fold {i}')
+        tf.keras.backend.clear_session()
+
+        # Extract data from just this fold
+        data, w2i, meta = get_fold_data(i, df, stitch_index, signals, args)
+        x_train, x_dev, x_test = data[0:3]
+        w_train, w_dev, w_test = data[3:6]
+        y_train, y_dev, y_test = data[6:9]
+        z_train, z_dev, z_test = data[9:12]
+        index2word = {j: word for word, j in w2i.items()}
+        args.n_classes = len(w2i)
+        print('ZZ', x_test.shape, y_test.shape, z_test.shape)
+
+        models = []
+        results = {}
+        results['fold'] = i
+        results.update(meta)
+
+        # Train
+        if not args.classify and not args.ensemble:
+            model, res = train_regression(x_train, z_train, x_dev, z_dev, args)
+            results.update(res)
+            models = [model]
+        elif args.classify and not args.ensemble:
+            model, res = train_classifier(x_train, y_train, x_dev, y_dev, args)
+            models = [model]
+        elif args.ensemble:
+            models = load_trained_models(i, args)
+
+        # Evaluate
+        if args.classify:
+            res = evaluate_classifier(models, w_train, x_test, y_test, w2i,
+                                      args)
+            results.update(res)
+        else:
+            w_all = np.concatenate((w_train, w_dev, w_test), axis=0)
+            y_all = np.concatenate((y_train, y_dev, y_test), axis=0)
+            z_all = np.concatenate((z_train, z_dev, z_test), axis=0)
+            all_data = (w_all, y_all, z_all)
+
+            res = evaluate_regression(models, w_train, x_test, y_test, z_test,
+                                      all_data, w2i, args)
+            results.update(res)
+
+        fold_results.append(results)
+
+    save_results(fold_results, args)
+    print(args.save_dir)

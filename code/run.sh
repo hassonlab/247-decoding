@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --time=01:30:00
+#SBATCH --time=01:10:00
 #SBATCH --mem=16GB
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
@@ -20,7 +20,7 @@ fi
 echo 'Requester:' $USER
 echo 'Node:' $HOSTNAME
 echo "$@"
-for run in $(seq 1 6); do
+for run in $(seq 1 10); do
     echo 'Run start time:' `date`
     python "$@"
     echo 'Run end time:' `date`
