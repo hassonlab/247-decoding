@@ -200,7 +200,7 @@ def load_pickles(args):
 
 
 def pitom(input_shapes, n_classes):
-    '''
+    '''Define the decoding model.
     input_shapes = (input_shape_cnn, input_shape_emb)
     '''
 
@@ -285,8 +285,8 @@ class WeightAverager(tf.keras.callbacks.Callback):
             print('Averaged {} weights.'.format(p + 1))
 
 
-# Define language model decoder
 def language_decoder(args):
+    """Define language model decoder. Currently unusued."""
     lang_model = transformers.TFBertForMaskedLM.from_pretrained(
         args.model_name, cache_dir='/scratch/gpfs/zzada/cache-tf')
     d_size = lang_model.config.hidden_size
@@ -317,22 +317,17 @@ def get_decoder(args):
 
 def extract_signal_from_fold(examples, stitch_index, signals, args):
 
-    #fs = 512
-    fs = 16  # for binned
+    fs = 16  # 16 for binned, otherwise 512
     shift_fs = int(args.lag / 1000 * fs)
     half_window = int(args.half_window / 1000 * fs)
-    bin_fs = int(62.5 / 1000 * fs)
-    n_bins = half_window * 2 // bin_fs
-
-    stitches = np.array(stitch_index)
 
     skipped = 0
+    stitches = np.array(stitch_index)
     x, w, z = [], [], []
     for label in examples:
-        bin_index = int(label['onset'] // 32)
+        bin_index = int(label['onset'] // 32)  # divide by 32 for binned signal
         bin_rank = (stitches <= bin_index).nonzero()[0][-1]
-        bin_start, bin_stop = 0, 1e9# len(signals)
-        # bin_start, bin_stop = stitch_index[bin_rank], stitch_index[bin_rank + 1]
+        bin_start, bin_stop = stitch_index[bin_rank], stitch_index[bin_rank + 1]
 
         left_edge = bin_index - half_window + shift_fs
         right_edge = bin_index + half_window + shift_fs
@@ -341,16 +336,7 @@ def extract_signal_from_fold(examples, stitch_index, signals, args):
             skipped += 1
             continue
         else:
-
-            # # Split the area around the onset into bins and average each one
-            # word_signal = np.zeros((n_bins, signals.shape[-1]), np.float32)
-            # splits = np.split(signals[left_edge:right_edge, :], n_bins, axis=0)
-            # for i, frame in enumerate(splits):
-            #     word_signal[i] = frame.mean(axis=0)
-            # x.append(word_signal)
-
             x.append(signals[left_edge:right_edge, :])  # binned
-            # x.append(label['signal'])
             w.append(label['label'])
             z.append(label['embeddings'])
 
@@ -360,15 +346,6 @@ def extract_signal_from_fold(examples, stitch_index, signals, args):
     x = np.stack(x, axis=0)
     w = np.array(w)
     z = np.array(z)
-
-    # # When using old pickle, pull out relevant parts
-    # jump = args.lag // 62.5
-    # n_bins_window = 10  # args.window_size // args.bin_size  # e.g. 10
-    # n_bins = 21000 // 62.5  # args.total_window_size // args.bin_size
-    # lag0_from = n_bins // 2 - n_bins_window // 2
-    # lag0_to = n_bins // 2 + n_bins_window // 2
-    # bins = np.arange(lag0_from + jump, lag0_to + jump, dtype=np.int)
-    # x = x[:, bins, :]
 
     return x, w, z
 
@@ -395,7 +372,7 @@ def get_fold_data(k, df, stitch, X, args):
     x_dev = (x_dev - train_means) / train_stds
     x_test = (x_test - train_means) / train_stds
 
-    # NOTE filter based on freq
+    # filter based on freq
     counter_train = Counter(w_train)
     if args.min_dev_freq > 0:
         class_list = set(
@@ -425,7 +402,6 @@ def get_fold_data(k, df, stitch, X, args):
     y_dev = np.array([word2index[w] for w in w_dev])
     y_test = np.array([word2index[w] for w in w_test])
 
-    assert x_train.shape[1] == 10  # NOTE remove
     assert x_train.shape[0] == y_train.shape[0] == w_train.shape[
         0] == z_train.shape[0]
     assert x_dev.shape[0] == y_dev.shape[0] == w_dev.shape[0] == z_dev.shape[0]
@@ -455,11 +431,6 @@ def load_trained_models(k, args):
                 print(f'Loaded {fn}')
             except Exception as e:
                 print(f'Problem loading model: {e}')
-    # for i in range(10):
-    #     fn = '/scratch/gpfs/zzada/podcast-decoding/results-podcast-twostep/'
-    #     fn += f'777-m_vsr-e_160-x_none-w_625_62.5_21000-f_055-d_glove-50d-lemma-f_nostrat-zz-l_250-run_{i}/model0.h5'
-    #     models.append(tf.keras.models.load_model(fn))
-        # print(f'Loaded {fn}')
     assert len(models) > 0, f'No trained models found: {prev_dir}'
     return models
 
@@ -686,7 +657,7 @@ def create_folds(df, num_folds, split_str=None):
         else:
             raise Exception('wrong string')
 
-        folds = [t[1] for t in skf.split(df, df.word)]  # on word NOTE label
+        folds = [t[1] for t in skf.split(df, df.label)]
         return folds
 
     folds = stratify_split(df, num_folds, split_str=split_str)
@@ -711,32 +682,28 @@ def create_folds(df, num_folds, split_str=None):
 
 
 def prepare_data(df, args):
-    # Clean up data
-    df = df[~df.token.isin(list(string.punctuation))]
-    df = df[df.onset > 0]
 
-    # create folds based on filtered dataset
-    # NOTE - this should be after, but this is how i did it for podcast
-    # i guess.
-    df = create_folds(df.reset_index(drop=True), 5)
+    df['label'] = df.lemmatized_word.str.lower()
+
+    # Clean up data
+    df = df[df.onset > 0]
+    df = df[~df.label.isin(list(string.punctuation))]
 
     # Remove nans
     df.dropna(axis=0, subset=['embeddings'], inplace=True)
-    # df['is_nan'] = df['embeddings'].apply(lambda x: np.isnan(x).all())
-    # df = df[~df['is_nan']]
 
     # Run PCA
     if args.pca is not None:
         df = run_pca(df, k=args.pca)
 
-    # NOTE
+    # Filter out criteria
     NONWORDS = {'hm', 'huh', 'mhm', 'mm', 'oh', 'uh', 'uhuh', 'um'}
     common = df.in_glove
     for model in args.align_with:
         common = common & df[f'in_{model}']
     nonword_mask = df.word.str.lower().apply(lambda x: x in NONWORDS)
     freq_mask = df.word_freq_overall >= args.min_word_freq
-    # df = df[common & freq_mask & ~nonword_mask]  # NOTE to replicate
+    df = df[common & freq_mask & ~nonword_mask]
     # df = df[common & freq_mask]  # & ~nonword_mask]
 
     # Keep production or comprehension
@@ -744,6 +711,9 @@ def prepare_data(df, args):
     df = df[op(df.speaker, 'Speaker1')]
 
     assert df.size > 0, 'No data left after processing criteria'
+
+    # Create folds based on filtered dataset
+    df = create_folds(df.reset_index(drop=True), 5)
 
     return df
 
@@ -792,14 +762,7 @@ if __name__ == '__main__':
     # Load data
     signals, stitch_index, label_folds = load_pickles(args)
     df = pd.DataFrame(label_folds)
-    df['label'] = df.lemmatized_word.str.lower()
-
-    # # NOTE - just to be able to run podcast-decoding style pickle
-    # df['token'] = df.word
-    # df['word_freq_overall'] = 0
-    # df.rename(columns={'embedding': 'embeddings'}, inplace=True)
-
-    df = prepare_data(df, args)
+    df = prepare_data(df, args)  # prune
 
     # Run
     histories = []
@@ -826,7 +789,6 @@ if __name__ == '__main__':
 
         # Train
         if not args.classify and not args.ensemble:
-            # model = tf.keras.models.load_model(f'/scratch/gpfs/zzada/podcast-decoding/results-podcast-twostep/777-m_vsr-e_160-x_none-w_625_62.5_21000-f_055-d_glove-50d-lemma-f_nostrat-zz-l_250-run_0/model{i}.h5')
             model, res = train_regression(x_train, z_train, x_dev, z_dev, args)
             results.update(res)
             models = [model]

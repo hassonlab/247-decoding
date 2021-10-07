@@ -10,24 +10,19 @@ NL = $(words $(LAGS))
 #  Configurable options
 # -----------------------------------------------------------------------------
 
-# Choose the command to run: python runs locally, echo is for debugging, sbatch
-# is for running on SLURM all lags in parallel.
-CMD = echo
-CMD = python
-CMD = sbatch --array=1-$(NL) code/run.sh
+PJCT := tfs
+PJCT := podcast
 
-# Choose the subject to run for
-SIG_FN :=
-SID := 676
-SID := 625
 
-SID := 777
-SIG_FN := --sig-elec-file data/129-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH.csv
-SIG_FN := --sig-elec-file data/164-phase-5000-sig-elec-gpt2xl50d-perElec-FDR-01-LH.csv
-SIG_FN := --sig-elec-file data/160-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH_newVer.csv
+# Model options
+# ---------------
 
-# specify the number of electrodese to be part of the output directory
-NE = 160
+# Regression or classification
+MODE := --classify
+MODN := classify
+
+MODE := 
+MODN := regress
 
 # Choose model hyper parameters
 PARAMS := default
@@ -39,7 +34,41 @@ HYPER_PARAMS := --batch-size 608 --lr 0.0019 --dropout 0.11 --reg 0.01269 --reg-
 PARAMS := vsr
 HYPER_PARAMS := --batch-size 256 --lr 0.00025 --dropout 0.21 --reg 0.003 --reg-head 0.0005 --conv-filters 160 --epochs 1500 --patience 150 --half-window 312.5 --n-weight-avg 20
 
+# Dataset options
+# ---------------
 
+# Choose the subject to run for
+SIG_FN :=
+SID := 676
+SID := 625
+
+SID := 777
+SIG_FN := --sig-elec-file data/129-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH.csv
+SIG_FN := --sig-elec-file data/164-phase-5000-sig-elec-gpt2xl50d-perElec-FDR-01-LH.csv
+SIG_FN := --sig-elec-file data/160-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH_newVer.csv
+
+NE = 160
+
+# Choose embedddings
+# glove
+EMB := $(SID)_full_glove50_layer_01_embeddings.pkl
+EMBN = glove50
+PCA :=
+
+# gpt2
+EMB := $(SID)_full_gpt2-xl_cnxt_1024_layer_48_embeddings.pkl
+EMBN = gpt2xl
+PCA := --pca 50
+
+# blenderbot
+# EMB := blenderbot-small
+
+
+# Align with others
+ALIGN_WITH = --align-with gpt2 blenderbot_small_90M
+ALIGN_WITH = --align-with gpt2
+
+# Minimum word frequency
 MWF := 5
 
 # Choose which modes to run for: production, comprehension, or both.
@@ -47,47 +76,28 @@ MODES := prod comp
 MODES := prod
 MODES := comp
 
-# Regression or classification
-MODE := --classify
-MODN := classify
+# Running options
+# ---------------
 
-MODE := 
-MODN := regress
+# Choose the command to run: python runs locally, echo is for debugging, sbatch
+# is for running on SLURM all lags in parallel.
+CMD = echo
+CMD = python
+CMD = sbatch --array=1-$(NL) code/run.sh
 
-# preprocessing options
-PCA := --pca 50
-
-# Choose embedddings
-EMB := blenderbot-small
-
-EMB := $(SID)_full_glove50_layer_01_embeddings.pkl
-EMBN = glove50
-PCA :=
-
-EMB := $(SID)_full_gpt2-xl_cnxt_1024_layer_48_embeddings.pkl
-EMBN = gpt2xl
-
-ALIGN_WITH = --align-with gpt2 blenderbot_small_90M
-ALIGN_WITH = --align-with gpt2
-
-# misc changes
+# misc flags
 MISC := --epochs 1
 MISC :=
-
 
 # Ignore. Choose how many jobs to run for each lag. NOTE - one sbatch job runs multiple
 # jobs If sbatch runs 5 in each job, and if LAGX = 2, then you'll get 10 runs
 # in total.
 LAGX := 1
 
-# Choose the lags to run for (512hz).
-# 16 is 1s, 8 is 0.5s, 4 is 0.25s
+# Choose the lags to run for in ms
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS = $(shell seq -512 64 512)
+LAGS = $(shell seq -1000 250 1000)
 LAGS = 250
-
-PJCT := tfs
-PJCT := podcast
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -95,8 +105,6 @@ PJCT := podcast
 
 # General function to run decoding given the configured parameters above.
 # Note that run.sh will run an ensemble as well.
-	        #--signal-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_full_signal.pkl \
-		--label-pickle data/756e-fold0.pickle 
 run-decoding:
 	for mode in $(MODES); do \
 	    $(CMD) code/tfsdec_main.py \
@@ -113,27 +121,10 @@ run-decoding:
 	        $(MODE) \
 	        $(EMBP) \
 	        $(MISC) \
-	        --model latest-s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF); \
+	        --model latest3foldafter-s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF); \
 	done
 
-run-decoding-single:
-	for lag in {1..$(NL)}; do \
-	    for mode in $(MODES); do \
-		python code/tfsdec_main.py \
-		    --lag $${lag} \
-		    --signal-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_binned_signal.pkl \
-		    --label-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_full_$(EMB)_cnxt_1024_embeddings.pkl \
-		    --lags $(LAGS) \
-		    $(HYPER_PARAMS) \
-		    --mode $${mode} \
-		    $(PCA) \
-		    $(MODE) \
-		    $(EMBP) \
-		    $(MISC) \
-		    --model s-$(SID)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS); \
-	    done; \
-	done
-
+# In case you need to run the ensemble on its own
 run-ensemble:
 	for mode in $(MODES); do \
 		$(CMD) \
@@ -213,4 +204,3 @@ archive-results:
 print-lags:
 	@echo number of lags: $(NL)
 	@echo $(LAGS)
-
