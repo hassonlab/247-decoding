@@ -34,9 +34,10 @@ PARAMS := default
 HYPER_PARAMS :=
 
 PARAMS := borgcls
-HYPER_PARAMS := --batch-size 608 --lr 0.0019 --dropout 0.11 --reg 0.01269 --reg-head 0.0004 --conv-filters 160 --epochs 300 --patience 120 --half-window 5 --n-weight-avg 30
+HYPER_PARAMS := --batch-size 608 --lr 0.0019 --dropout 0.11 --reg 0.01269 --reg-head 0.0004 --conv-filters 160 --epochs 300 --patience 120 --half-window 312.5 --n-weight-avg 30
+
 PARAMS := vsr
-HYPER_PARAMS := --batch-size 256 --lr .00025 --dropout 0.21 --reg 0.003 --reg-head 0.0005 --conv-filters 160 --epochs 1500 --patience 150 --half-window 5 --n-weight-avg 20
+HYPER_PARAMS := --batch-size 256 --lr 0.00025 --dropout 0.21 --reg 0.003 --reg-head 0.0005 --conv-filters 160 --epochs 1500 --patience 150 --half-window 312.5 --n-weight-avg 20
 
 
 MWF := 5
@@ -57,14 +58,14 @@ MODN := regress
 PCA := --pca 50
 
 # Choose embedddings
-EMBN = $(EMB)
 EMB := blenderbot-small
-EMB := gpt2-xl
 
-# glove gets special treatment
+EMB := $(SID)_full_glove50_layer_01_embeddings.pkl
 EMBN = glove50
-EMBP := --glove
 PCA :=
+
+EMB := $(SID)_full_gpt2-xl_cnxt_1024_layer_48_embeddings.pkl
+EMBN = gpt2xl
 
 ALIGN_WITH = --align-with gpt2 blenderbot_small_90M
 ALIGN_WITH = --align-with gpt2
@@ -80,11 +81,10 @@ MISC :=
 LAGX := 1
 
 # Choose the lags to run for (512hz).
+# 16 is 1s, 8 is 0.5s, 4 is 0.25s
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
 LAGS = $(shell seq -512 64 512)
-# 16 is 1s, 8 is 0.5s, 4 is 0.25s
-LAGS = 4
-LAGS = $(shell seq -16 4 16)
+LAGS = 250
 
 PJCT := tfs
 PJCT := podcast
@@ -93,29 +93,27 @@ PJCT := podcast
 # Decoding
 # -----------------------------------------------------------------------------
 
-# Ensure that data pickles exist before kicking off any jobs
-data-exists:
-	@[[ -r data/$(PJCT)/$(SID)/pickles/$(SID)_binned_signal.pkl ]] || echo "[ERROR] $(SID)_binned_signal.pkl does not exist!";
-	@[[ -r data/$(PJCT)/$(SID)/pickles/$(SID)_full_labels_MWF_30.pkl ]] || echo "[ERROR] $(SID)_full_labels_MWF30.pkl does not exist!";
-
 # General function to run decoding given the configured parameters above.
 # Note that run.sh will run an ensemble as well.
+	        #--signal-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_full_signal.pkl \
+		--label-pickle data/756e-fold0.pickle 
 run-decoding:
 	for mode in $(MODES); do \
 	    $(CMD) code/tfsdec_main.py \
 	        --signal-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_binned_signal.pkl \
-	        --label-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_full_$(EMB)_cnxt_1024_embeddings.pkl \
+	        --label-pickle data/$(PJCT)/$(SID)/pickles/$(EMB) \
 	        --lags $(LAGS) \
 	        $(HYPER_PARAMS) \
 	        --mode $${mode} \
 		--min-dev-freq $(MWF) --min-test-freq $(MWF) \
+		--verbose 0 \
 		$(SIG_FN) \
 		$(ALIGN_WITH) \
 	        $(PCA) \
 	        $(MODE) \
 	        $(EMBP) \
 	        $(MISC) \
-	        --model s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF); \
+	        --model latest-s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF); \
 	done
 
 run-decoding-single:
@@ -136,7 +134,7 @@ run-decoding-single:
 	    done; \
 	done
 
-run-ensemble: data-exists
+run-ensemble:
 	for mode in $(MODES); do \
 		$(CMD) \
 		    code/tfsdec_main.py \

@@ -6,7 +6,7 @@ import pandas as pd
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
 from scipy.special import softmax
-from sklearn.metrics import auc, confusion_matrix, roc_curve
+from sklearn.metrics import auc, confusion_matrix, roc_curve, roc_auc_score
 
 
 def corr(A, B):
@@ -147,6 +147,9 @@ def evaluate_roc(predictions,
     test_word_freqs = np.array(test_word_freqs)
     normed_freqs = test_word_freqs / test_word_freqs.sum()
     test_weighted_avg = (scores * normed_freqs).sum()
+
+    # skl_macro = roc_auc_score(labels, predictions, average='macro', multi_class='ovr')
+    # skl_weighted = roc_auc_score(labels, predictions, average='weighted', multi_class='ovr')
 
     cols = 'word,freq_ds,freq_train,rocauc,tp,fp,fn,tn'.split(',')
     df = pd.DataFrame.from_records(lines, columns=cols)
