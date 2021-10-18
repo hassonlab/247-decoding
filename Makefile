@@ -96,8 +96,8 @@ LAGX := 1
 
 # Choose the lags to run for in ms
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS = $(shell seq -1000 250 1000)
 LAGS = 250
+LAGS = $(shell seq -1000 250 1000)
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -106,10 +106,11 @@ LAGS = 250
 # General function to run decoding given the configured parameters above.
 # Note that run.sh will run an ensemble as well.
 run-decoding:
+	for layer in $(shell seq -w 1 48); do \
 	for mode in $(MODES); do \
 	    $(CMD) code/tfsdec_main.py \
 	        --signal-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_binned_signal.pkl \
-	        --label-pickle data/$(PJCT)/$(SID)/pickles/$(EMB) \
+	        --label-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_full_gpt2-xl_cnxt_1024_layer_$${layer}_embeddings.pkl \
 	        --lags $(LAGS) \
 	        $(HYPER_PARAMS) \
 	        --mode $${mode} \
@@ -121,7 +122,8 @@ run-decoding:
 	        $(MODE) \
 	        $(EMBP) \
 	        $(MISC) \
-	        --model latest3foldafter-s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF); \
+	        --model s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_l-$${layer}_p-$(PARAMS)_mwf-$(MWF); \
+	done; \
 	done
 
 # In case you need to run the ensemble on its own
@@ -152,6 +154,16 @@ plots: aggregate-results plot sync-plots
 	    #     "model == 's-777_e-164_t-regress_m-comp_e-gpt2-xl_p-borgcls_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
 	    #     "model == 's-777_e-164_t-regress_m-comp_e-gpt2-xl_p-vsr_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
 
+plot-layers:
+	python code/plot.py \
+	    --q "model == 's-777_e-160_t-regress_m-comp_e-gpt2xl_l-%02d_p-vsr_mwf-5' and ensemble == True and lag >= -1000 and lag <= 1000" \
+	        "model == 's-777_e-160_t-regress_m-comp_e-gpt2xl_p-vsr_mwf-5' and ensemble == True and lag >= -1000 and lag <= 1000" \
+	    --values {1..48..1} \
+	    --x lag \
+	    --y avg_test_emb_corr_aT \
+	    --output results/plots/testlayers-s-777_e-160_t-regress_m-comp_e-gg_p-borgcls2
+	rsync -av results/plots/ /tigress/zzada/247-decoding-results/plots/
+
 plot:
 	mkdir -p results/plots/
 	python code/plot.py \
@@ -161,6 +173,7 @@ plot:
 	    --x lag \
 	    --y avg_test_nn_rocauc_test_w_avg \
 	    --output results/plots/s-777_e-160_t-regress_m-comp_e-gg_p-borgcls
+	rsync -av results/plots/ /tigress/zzada/247-decoding-results/plots/
 
 aggregate-results:
 	python code/aggregate_results.py
