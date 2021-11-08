@@ -15,6 +15,8 @@ import pandas as pd
 import tensorflow as tf
 import transformers
 from sklearn.decomposition import PCA
+from sklearn.model_selection import (KFold, StratifiedKFold,
+                                     StratifiedGroupKFold)
 
 from evaluate import (evaluate_embeddings, evaluate_roc, evaluate_topk,
                       get_class_predictions, get_class_predictions_kd)
@@ -183,18 +185,27 @@ def load_pickles(args):
     stitch_index.insert(0, 0)
 
     if args.sig_elec_file:
+        # We assume electrode names is the same order as electrodes in pickle
+
         elecs = pd.DataFrame(zip(signal_d['subject'],
                                  signal_d['electrode_names']),
                              columns=['subject', 'electrode'])
         elecs['id'] = elecs.index.values
         elecs.set_index(['subject', 'electrode'], inplace=True)
+        if len(elecs.index.get_level_values('subject').unique()):
+            elecs = elecs.droplevel(0)
 
         sigelecs = pd.read_csv(args.sig_elec_file)
         sigelecs.set_index(['subject', 'electrode'], inplace=True)
+        if len(sigelecs.index.get_level_values('subject').unique()):
+            sigelecs = sigelecs.droplevel(0)
 
         electrodes = sigelecs.join(elecs).id.values
         signals = signals[..., electrodes]
         print(f'Using subset of electrodes: {electrodes.size}')
+    else:
+        electrodes = np.arange(64)  # NOTE hardcoded
+        signals = signals[..., electrodes]
 
     return signals, stitch_index, label_folds
 
@@ -325,7 +336,7 @@ def extract_signal_from_fold(examples, stitch_index, signals, args):
     stitches = np.array(stitch_index)
     x, w, z = [], [], []
     for label in examples:
-        bin_index = int(label['onset'] // 32)  # divide by 32 for binned signal
+        bin_index = int(label['adjusted_onset'] // 32)  # divide by 32 for binned signal
         bin_rank = (stitches <= bin_index).nonzero()[0][-1]
         bin_start, bin_stop = stitch_index[bin_rank], stitch_index[bin_rank + 1]
 
@@ -338,7 +349,10 @@ def extract_signal_from_fold(examples, stitch_index, signals, args):
         else:
             x.append(signals[left_edge:right_edge, :])  # binned
             w.append(label['label'])
-            z.append(label['embeddings'])
+            if 'embeddings' in label:
+                z.append(label['embeddings'])
+            else:
+                z.append([0])
 
     if skipped > 0:
         print(f'Skipped {skipped} examples due to boundary conditions')
@@ -640,13 +654,12 @@ def run_pca(df, k=50):
     return df
 
 
-def create_folds(df, num_folds, split_str=None):
+def create_folds(df, num_folds, split_str=None, groupkey='label'):
     """create new columns in the df with the folds labeled
     Args:
         args (namespace): namespace object with input arguments
         df (DataFrame): labels
     """
-    from sklearn.model_selection import KFold, StratifiedKFold
 
     def stratify_split(df, num_folds, split_str=None):
         # Extract only test folds
@@ -654,13 +667,19 @@ def create_folds(df, num_folds, split_str=None):
             skf = KFold(n_splits=num_folds, shuffle=False)  # random_state=0)
         elif split_str == 'stratify':
             skf = StratifiedKFold(n_splits=num_folds, shuffle=False)
+        elif split_str == 'stratify_group':
+            skf = StratifiedGroupKFold(n_splits=num_folds, shuffle=False)
         else:
             raise Exception('wrong string')
 
-        folds = [t[1] for t in skf.split(df, df.label)]
+        folds = [t[1] for t in skf.split(df, y=df.label, groups=df[groupkey])]
         return folds
 
+    # Get the folds
     folds = stratify_split(df, num_folds, split_str=split_str)
+    # Ensure all folds are semi-equal sized [len(f) for f in folds]
+    # Ensure no groups cross folds
+    # [df.conversation_id.iloc[folds[i]].unique().tolist() for i in range(5)]
 
     # Go through each fold, and split
     fold_column_names = [f'fold{i}' for i in range(num_folds)]
@@ -686,15 +705,19 @@ def prepare_data(df, args):
     df['label'] = df.lemmatized_word.str.lower()
 
     # Clean up data
-    df = df[df.onset > 0]
+    df = df[df.adjusted_onset > 0]
     df = df[~df.label.isin(list(string.punctuation))]
 
     # Remove nans
-    df.dropna(axis=0, subset=['embeddings'], inplace=True)
+    if not args.classify:
+        df.dropna(axis=0, subset=['embeddings'], inplace=True)
+        df.iloc[df.embeddings.apply(lambda x: np.isnan(x[0])),
+                df.columns.tolist().index('embeddings')] = None
+        df.dropna(axis=0, subset=['embeddings'], inplace=True)
 
-    # Run PCA
-    if args.pca is not None:
-        df = run_pca(df, k=args.pca)
+        # Run PCA
+        if args.pca is not None:
+            df = run_pca(df, k=args.pca)
 
     # Filter out criteria
     NONWORDS = {'hm', 'huh', 'mhm', 'mm', 'oh', 'uh', 'uhuh', 'um'}
@@ -704,16 +727,17 @@ def prepare_data(df, args):
     nonword_mask = df.word.str.lower().apply(lambda x: x in NONWORDS)
     freq_mask = df.word_freq_overall >= args.min_word_freq
     df = df[common & freq_mask & ~nonword_mask]
-    # df = df[common & freq_mask]  # & ~nonword_mask]
 
     # Keep production or comprehension
     op = operator.eq if 'prod' in args.mode.lower() else operator.ne
     df = df[op(df.speaker, 'Speaker1')]
 
     assert df.size > 0, 'No data left after processing criteria'
+    assert df.adjusted_onset.notna().all(), 'nan onsets'
 
     # Create folds based on filtered dataset
-    df = create_folds(df.reset_index(drop=True), 5)
+    df = create_folds(df.reset_index(drop=True), 5,
+                      'stratify_group', groupkey='conversation_id')
 
     return df
 
@@ -728,8 +752,12 @@ def save_results(fold_results, args):
 
     # Save dataframes
     dfs = {k: df for k, df in results.items() if isinstance(df, pd.DataFrame)}
-    merged = pd.concat((dfs['avg_test_nn_rocauc_df'], dfs['avg_test_nn_topk_df']), axis=1)
-    merged.to_csv(os.path.join(args.save_dir, 'avg_test_topk_rocaauc_df.csv'))
+    if 'avg_test_nn_rocauc_df' in dfs and 'avg_test_nn_topk_df' in dfs:
+        merged = pd.concat((dfs['avg_test_nn_rocauc_df'], dfs['avg_test_nn_topk_df']), axis=1)
+        merged.to_csv(os.path.join(args.save_dir, 'avg_test_topk_rocaauc_df.csv'))
+    if 'avg_test_rocauc_df' in dfs and 'avg_test_topk_df' in dfs:
+        merged = pd.concat((dfs['avg_test_rocauc_df'], dfs['avg_test_topk_df']), axis=1)
+        merged.to_csv(os.path.join(args.save_dir, 'avg_test_topk_rocaauc_df.csv'))
 
     # Remove all non-serializable objects
     bads = [k for k, v in results.items() if isinstance(v, pd.DataFrame)]
@@ -761,7 +789,7 @@ if __name__ == '__main__':
 
     # Load data
     signals, stitch_index, label_folds = load_pickles(args)
-    df = pd.DataFrame(label_folds)
+    df = pd.DataFrame(label_folds)  # ['labels'])  # NOTE for trimmed only?
     df = prepare_data(df, args)  # prune
 
     # Run
@@ -815,7 +843,6 @@ if __name__ == '__main__':
             results.update(res)
 
         fold_results.append(results)
-        print('ROCAUC', res['test_nn_rocauc_test_w_avg'])
 
     save_results(fold_results, args)
     print(args.save_dir)
