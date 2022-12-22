@@ -3,7 +3,7 @@
 # models. Update and run the plot target to create a new plot.
 
 # Non-configurable paramters. Don't touch.
-USR := $(shell whoami | head -c 2)
+USER := $(shell whoami)
 NL = $(words $(LAGS))
 
 # -----------------------------------------------------------------------------
@@ -56,7 +56,7 @@ EMBN = glove50
 PCA :=
 
 # gpt2
-EMB := $(SID)_full_gpt2-xl_cnxt_1024_layer_48_embeddings.pkl
+EMB := $(SID)_full_gpt2-xl_cnxt_1023_layer_48_embeddings.pkl
 EMBN = gpt2xl
 PCA := --pca 50
 
@@ -69,7 +69,7 @@ ALIGN_WITH = --align-with gpt2 blenderbot_small_90M
 ALIGN_WITH = --align-with gpt2
 
 # Minimum word frequency
-MWF := 5
+MWF := 0
 
 # Choose which modes to run for: production, comprehension, or both.
 MODES := prod comp
@@ -96,8 +96,8 @@ LAGX := 1
 
 # Choose the lags to run for in ms
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS = $(shell seq -1000 250 1000)
-LAGS = 250
+LAGS = 0
+LAGS = $(shell seq -2000 250 2000)
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -172,17 +172,18 @@ aggregate-results:
 # -----------------------------------------------------------------------------
 
 setup:
-	mkdir -p /scratch/gpfs/$USER/247-decoding/{data,results,logs}
-	ln -s /scratch/gpfs/$USER/247-decoding/data
-	ln -s /scratch/gpfs/$USER/247-decoding/logs
-	ln -s /scratch/gpfs/$USER/247-decoding/results
-	@echo ln -s /scratch/gpfs/$USER/247-pickling/results/* /scratch/gpfs/$USER/247-decoding/data/
+	mkdir -p /scratch/gpfs/$(USER)/0shot-decoding/{data,results,logs}
+	ln -s /scratch/gpfs/$(USER)/0shot-decoding/data
+	ln -s /scratch/gpfs/$(USER)/0shot-decoding/logs
+	ln -s /scratch/gpfs/$(USER)/0shot-decoding/results
+	@echo ln -s /scratch/gpfs/$(USER)/0shot-pickling/results/* /scratch/gpfs/$(USER)/0shot-decoding/data/
 
 
 # If you have pickled the data yourself, then you can just link to it
 link-data:
 	echo "revisit this:"
-	# ln -sf $(shell dirname `pwd`)/247-pickling/results/* data/
+	ln -sf $(shell dirname `pwd`)/0shot-pickling/results/* data/
+	ln -s /projects/HASSON/247/data/podcast-data/*.csv data/
 
 # Otherwise, you can download it from google cloud bucket
 download-data:
