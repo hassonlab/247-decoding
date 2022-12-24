@@ -54,6 +54,7 @@ def arg_parser():
     parser.add_argument("--align-with", nargs="*", type=str, default=[])
     parser.add_argument("--min-dev-freq", type=int, default=-1)
     parser.add_argument("--min-test-freq", type=int, default=-1)
+    parser.add_argument("--shuffle", action="store_true", default=False)
 
     # Training args
     parser.add_argument(
@@ -222,15 +223,16 @@ def load_pickles(args):
         )
         elecs["id"] = elecs.index.values
         elecs.set_index(["subject", "electrode"], inplace=True)
-        if len(elecs.index.get_level_values("subject").unique()) == 1:
-            elecs = elecs.droplevel(0)
+        # if len(elecs.index.get_level_values("subject").unique()) == 1:
+        #     elecs = elecs.droplevel(0)
 
         sigelecs = pd.read_csv(args.sig_elec_file)
         sigelecs.set_index(["subject", "electrode"], inplace=True)
-        if len(sigelecs.index.get_level_values("subject").unique()) == 1:
-            sigelecs = sigelecs.droplevel(0)
+        print(f"Original # of elecs in area: {len(sigelecs)}")
+        # if len(sigelecs.index.get_level_values("subject").unique()) == 1:
+        #     sigelecs = sigelecs.droplevel(0)
 
-        electrodes = sigelecs.join(elecs).id.values
+        electrodes = sigelecs.join(elecs, how="inner").id.values
         signals = signals[..., electrodes]
         print(f"Using subset of electrodes: {electrodes.size}")
     else:
@@ -818,6 +820,15 @@ def zeroshot_datum(df):
     return df
 
 
+def shuffle_datum(df):
+
+    print("Shuffling Datum")
+    df.loc[:, "embeddings"] = df.embeddings.sample(frac=1).values
+    df.loc[:, "embeddings"] = np.random.permutation(df.embeddings.values)
+
+    return df
+
+
 def prepare_data(df, args):
 
     df["label"] = df.lemmatized_word.str.lower()
@@ -841,9 +852,9 @@ def prepare_data(df, args):
 
     # Filter out criteria
     NONWORDS = {"hm", "huh", "mhm", "mm", "oh", "uh", "uhuh", "um"}
-    common = df.in_glove
-    for model in args.align_with:
-        common = common & df[f"in_{model}"]
+    common = df.in_gpt2
+    # for model in args.align_with:
+    #     common = common & df[f"in_{model}"]
     nonword_mask = df.word.str.lower().apply(lambda x: x in NONWORDS)
     freq_mask = df.word_freq_overall >= args.min_word_freq
     df = df[common & freq_mask & ~nonword_mask]
@@ -856,6 +867,9 @@ def prepare_data(df, args):
     assert df.adjusted_onset.notna().all(), "nan onsets"
 
     df = zeroshot_datum(df)
+
+    if args.shuffle:
+        df = shuffle_datum(df)
 
     if "fold" in df.columns:
         df = format_folds(df)
