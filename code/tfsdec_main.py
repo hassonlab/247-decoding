@@ -86,9 +86,7 @@ def arg_parser():
         help="Number of epochs with no improvement after "
         "which training will be stopped.",
     )
-    parser.add_argument(
-        "--lm-head", action="store_true", help="NotImplementedError"
-    )
+    parser.add_argument("--lm-head", action="store_true", help="NotImplementedError")
     parser.add_argument(
         "--ensemble",
         action="store_true",
@@ -376,9 +374,7 @@ def extract_signal_from_fold(examples, stitch_index, signals, args):
     stitches = np.array(stitch_index)
     x, w, z = [], [], []
     for label in examples:
-        bin_index = int(
-            label["adjusted_onset"] // 32
-        )  # divide by 32 for binned signal
+        bin_index = int(label["adjusted_onset"] // 32)  # divide by 32 for binned signal
         bin_rank = (stitches <= bin_index).nonzero()[0][-1]
         bin_start, bin_stop = stitch_index[bin_rank], stitch_index[bin_rank + 1]
 
@@ -416,9 +412,7 @@ def get_fold_data(k, df, stitch, X, args):
     f_test = [ex for ex in labels if ex[f"fold{k}"] == "test"]
 
     # Get signal
-    x_train, w_train, z_train = extract_signal_from_fold(
-        f_train, stitch, X, args
-    )
+    x_train, w_train, z_train = extract_signal_from_fold(f_train, stitch, X, args)
     x_dev, w_dev, z_dev = extract_signal_from_fold(f_dev, stitch, X, args)
     x_test, w_test, z_test = extract_signal_from_fold(f_test, stitch, X, args)
 
@@ -435,9 +429,7 @@ def get_fold_data(k, df, stitch, X, args):
         class_list = set(
             map(
                 lambda x: x[0],
-                filter(
-                    lambda x: x[1] >= args.min_dev_freq, counter_train.items()
-                ),
+                filter(lambda x: x[1] >= args.min_dev_freq, counter_train.items()),
             )
         )
         mask = np.array([cls in class_list for cls in w_dev], dtype=np.bool)
@@ -447,9 +439,7 @@ def get_fold_data(k, df, stitch, X, args):
         class_list = set(
             map(
                 lambda x: x[0],
-                filter(
-                    lambda x: x[1] >= args.min_test_freq, counter_train.items()
-                ),
+                filter(lambda x: x[1] >= args.min_test_freq, counter_train.items()),
             )
         )
         mask = np.array([cls in class_list for cls in w_test], dtype=np.bool)
@@ -463,16 +453,9 @@ def get_fold_data(k, df, stitch, X, args):
     y_dev = np.array([word2index[w] for w in w_dev])
     y_test = np.array([word2index[w] for w in w_test])
 
-    assert (
-        x_train.shape[0]
-        == y_train.shape[0]
-        == w_train.shape[0]
-        == z_train.shape[0]
-    )
+    assert x_train.shape[0] == y_train.shape[0] == w_train.shape[0] == z_train.shape[0]
     assert x_dev.shape[0] == y_dev.shape[0] == w_dev.shape[0] == z_dev.shape[0]
-    assert (
-        x_test.shape[0] == y_test.shape[0] == w_test.shape[0] == z_test.shape[0]
-    )
+    assert x_test.shape[0] == y_test.shape[0] == w_test.shape[0] == z_test.shape[0]
 
     results = {}
     results["n_train"] = x_train.shape[0]
@@ -533,9 +516,7 @@ def train_regression(x_train, y_train, x_dev, y_dev, args):
 def train_classifier(x_train, y_train, x_dev, y_dev, args):
     """Train a classifier model"""
     model = pitom([x_train.shape[1:]], n_classes=None)
-    model = tf.keras.Model(
-        inputs=model.input, outputs=get_decoder(args)(model.output)
-    )
+    model = tf.keras.Model(inputs=model.input, outputs=get_decoder(args)(model.output))
     model.compile(
         loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
         optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr),
@@ -593,9 +574,7 @@ def train_model(model, x_train, y_train, x_dev, y_dev, args):
     return model, results
 
 
-def evaluate_regression(
-    models, w_train, x_test, y_test, z_test, all_data, w2i, args
-):
+def evaluate_regression(models, w_train, x_test, y_test, z_test, all_data, w2i, args):
     """
     z_test are embeddings.
     y_all are all embeddings
@@ -660,9 +639,7 @@ def evaluate_regression(
     preds = np.zeros((len(models), len(x_test), n_classes), dtype=np.float64)
     for j, model in enumerate(models):
         model_preds = model.predict(x_test)
-        preds[j] = get_class_predictions_kd(
-            model_preds, z_all, y_all, n_classes
-        )
+        preds[j] = get_class_predictions_kd(model_preds, z_all, y_all, n_classes)
     preds = np.average(preds, axis=0)  # average all predictions
 
     res = evaluate_topk(
@@ -852,7 +829,7 @@ def prepare_data(df, args):
 
     # Filter out criteria
     NONWORDS = {"hm", "huh", "mhm", "mm", "oh", "uh", "uhuh", "um"}
-    common = df.in_gpt2
+    common = np.repeat(True, len(df))
     # for model in args.align_with:
     #     common = common & df[f"in_{model}"]
     nonword_mask = df.word.str.lower().apply(lambda x: x in NONWORDS)
@@ -894,16 +871,10 @@ def save_results(fold_results, args):
         merged = pd.concat(
             (dfs["avg_test_nn_rocauc_df"], dfs["avg_test_nn_topk_df"]), axis=1
         )
-        merged.to_csv(
-            os.path.join(args.save_dir, "avg_test_topk_rocaauc_df.csv")
-        )
+        merged.to_csv(os.path.join(args.save_dir, "avg_test_topk_rocaauc_df.csv"))
     if "avg_test_rocauc_df" in dfs and "avg_test_topk_df" in dfs:
-        merged = pd.concat(
-            (dfs["avg_test_rocauc_df"], dfs["avg_test_topk_df"]), axis=1
-        )
-        merged.to_csv(
-            os.path.join(args.save_dir, "avg_test_topk_rocaauc_df.csv")
-        )
+        merged = pd.concat((dfs["avg_test_rocauc_df"], dfs["avg_test_topk_df"]), axis=1)
+        merged.to_csv(os.path.join(args.save_dir, "avg_test_topk_rocaauc_df.csv"))
 
     # Remove all non-serializable objects
     bads = [k for k, v in results.items() if isinstance(v, pd.DataFrame)]
@@ -975,9 +946,7 @@ if __name__ == "__main__":
 
         # Evaluate
         if args.classify:
-            res = evaluate_classifier(
-                models, w_train, x_test, y_test, w2i, args
-            )
+            res = evaluate_classifier(models, w_train, x_test, y_test, w2i, args)
             results.update(res)
         else:
             w_all = np.concatenate((w_train, w_dev, w_test), axis=0)
