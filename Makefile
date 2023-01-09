@@ -34,6 +34,9 @@ HYPER_PARAMS := --batch-size 608 --lr 0.0019 --dropout 0.11 --reg 0.01269 --reg-
 PARAMS := vsr
 HYPER_PARAMS := --batch-size 256 --lr 0.00025 --dropout 0.21 --reg 0.003 --reg-head 0.0005 --conv-filters 160 --epochs 1500 --patience 150 --half-window 312.5 --n-weight-avg 20
 
+PARAMS := 0shot
+HYPER_PARAMS := --batch-size 32 --lr 0.00005 --dropout 0.20 --reg 0.35 --reg-head 0.05 --conv-filters 160 --epochs 1000 --patience 150 --half-window 312.5 --n-weight-avg 20
+
 # Dataset options
 # ---------------
 
@@ -46,6 +49,7 @@ SID := 777
 SIG_FN := --sig-elec-file data/129-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH.csv
 SIG_FN := --sig-elec-file data/164-phase-5000-sig-elec-gpt2xl50d-perElec-FDR-01-LH.csv
 SIG_FN := --sig-elec-file data/160-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH_newVer.csv
+SIG_FN := --sig-elec-file data/0shot-regions/all3-PRE.csv
 
 NE = 160
 
@@ -56,7 +60,7 @@ EMBN = glove50
 PCA :=
 
 # gpt2
-EMB := $(SID)_full_gpt2-xl_cnxt_1023_layer_48_embeddings.pkl
+EMB := $(SID)_full_gpt2-xl_cnxt_1024_layer_48_embeddings.pkl
 EMBN = gpt2xl
 PCA := --pca 50
 
@@ -97,7 +101,11 @@ LAGX := 1
 # Choose the lags to run for in ms
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
 LAGS = 0
-LAGS = $(shell seq -2000 250 2000)
+LAGS = $(shell seq -4000 100 4000)
+
+
+# shuffle
+SH := --shuffle
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -121,7 +129,8 @@ run-decoding:
 	        $(MODE) \
 	        $(EMBP) \
 	        $(MISC) \
-	        --model latest3foldafter-s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF); \
+			$(SH) \
+	        --model s-all3-PRE_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)2-sh; \
 	done
 
 # In case you need to run the ensemble on its own
@@ -155,16 +164,18 @@ plots: aggregate-results plot sync-plots
 plot:
 	mkdir -p results/plots/
 	python code/plot.py \
-	    --q "model == 's-777_e-160_t-regress_m-comp_e-glove50_p-vsr_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
-	        "model == 's-777_e-160_t-regress_m-comp_e-gpt2-xl_p-vsr_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
-	    --labels glove gpt2 \
+	    --q "model == 's-798-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	        "model == 's-798-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	        "model == 's-798-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	        "model == 's-798-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	    --labels IFG Pre IFG-sh Pre-sh \
 	    --x lag \
 	    --y avg_test_nn_rocauc_test_w_avg \
-	    --output results/plots/s-777_e-160_t-regress_m-comp_e-gg_p-borgcls
+	    --output results/plots/0shot-798
 
 aggregate-results:
 	python code/aggregate_results.py
-	cp -f results/aggregate.csv /tigress/zzada/247-decoding-results/
+	cp -f results/aggregate.csv /tigress/$(USER)/0shot-decoding-results/
 
 
 # -----------------------------------------------------------------------------
