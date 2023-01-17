@@ -1,5 +1,6 @@
 import argparse
-
+import glob
+import os
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -35,8 +36,26 @@ def plot(args):
             color = "#190136"
         elif label == "Pre-sh":
             color = "#013611"
+        elif label == "IFG2":
+            color = "blue"
+        elif label == "Pre2":
+            color = "orange"
 
         plt.plot(x, y, label=label, color=color)
+
+    # breakpoint()
+    lags = glob.glob(os.path.join("results", args.sig, "*"))
+    for lag_folder in lags:
+        lag_name = os.path.basename(lag_folder)
+        csv_1 = os.path.join(
+            lag_folder, "ensemble", "avg_test_topk_rocaauc_df.csv"
+        )
+        csv_2 = csv_1.replace("IFG", "PRE")
+        results = pd.read_csv(csv_1)
+        results2 = pd.read_csv(csv_2)
+        # function
+
+        breakpoint()
 
     plt.grid()
     plt.legend(loc="upper left")
@@ -55,6 +74,7 @@ if __name__ == "__main__":
     parser.add_argument("--y", type=str, required=True)
     parser.add_argument("--yerr", type=str, default=None)
     parser.add_argument("--label", type=str, default=None)
+    parser.add_argument("--sig", type=str, default=None)
     parser.add_argument("--labels", nargs="*", type=str, default=[None] * 10)
     parser.add_argument("--input", type=str, default="results/aggregate.csv")
     parser.add_argument("--output", type=str, default="results/plots/out.png")

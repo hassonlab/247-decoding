@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --time=5:10:00
+#SBATCH --time=3:10:00
 #SBATCH --mem=16GB
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
@@ -16,7 +16,9 @@ elif [[ "$HOSTNAME" == *"della"* ]]
 then
     echo "It's Della"
     module load anaconda
-    source activate 247-main
+    module load cudatoolkit/11.7
+    module load cudnn/cuda-11.x/8.2.0
+    source activate /home/hgazula/.conda/envs/247-main
 else
     module load anacondapy
     source activate srm
