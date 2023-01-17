@@ -49,7 +49,7 @@ SID := 777
 SIG_FN := --sig-elec-file data/129-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH.csv
 SIG_FN := --sig-elec-file data/164-phase-5000-sig-elec-gpt2xl50d-perElec-FDR-01-LH.csv
 SIG_FN := --sig-elec-file data/160-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH_newVer.csv
-SIG_FN := --sig-elec-file data/0shot-regions/all3-PRE.csv
+SIG_FN := --sig-elec-file data/0shot-regions/717-PRE.csv
 
 NE = 160
 
@@ -60,7 +60,7 @@ EMBN = glove50
 PCA :=
 
 # gpt2
-EMB := $(SID)_full_gpt2-xl_cnxt_1024_layer_48_embeddings.pkl
+EMB := $(SID)_full_gpt2-xl_cnxt_1023_layer_48_embeddings.pkl
 EMBN = gpt2xl
 PCA := --pca 50
 
@@ -100,12 +100,12 @@ LAGX := 1
 
 # Choose the lags to run for in ms
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS = 0
 LAGS = $(shell seq -4000 100 4000)
+LAGS = 0
 
 
 # shuffle
-SH := --shuffle
+# SH := --shuffle
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -130,7 +130,7 @@ run-decoding:
 	        $(EMBP) \
 	        $(MISC) \
 			$(SH) \
-	        --model s-all3-PRE_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)2-sh; \
+	        --model s-717-PRE_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)3; \
 	done
 
 # In case you need to run the ensemble on its own
@@ -164,14 +164,15 @@ plots: aggregate-results plot sync-plots
 plot:
 	mkdir -p results/plots/
 	python code/plot.py \
-	    --q "model == 's-798-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	        "model == 's-798-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	        "model == 's-798-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	        "model == 's-798-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	    --labels IFG Pre IFG-sh Pre-sh \
+	    --q "model == 's-717-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	        "model == 's-717-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	        "model == 's-717-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	        "model == 's-717-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	    --sig s-717-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02/ \
+		--labels IFG Pre IFG-sh Pre-sh \
 	    --x lag \
 	    --y avg_test_nn_rocauc_test_w_avg \
-	    --output results/plots/0shot-798
+	    --output results/plots/0shot-742-test
 
 aggregate-results:
 	python code/aggregate_results.py
