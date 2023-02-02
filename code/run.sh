@@ -15,11 +15,15 @@ then
 elif [[ "$HOSTNAME" == *"della"* ]]
 then
     echo "It's Della"
+    # module load anaconda3/2021.11
     module load anaconda
-    source activate 247-main
+    module load cudatoolkit/12.0
+    module load cudnn/cuda-11.x/8.2.0
+    source activate /home/hgazula/.conda/envs/247-main-tf
+    # source activate 247-main
 else
     module load anacondapy
-    source activate srm
+    source activate 247-main
 fi
 
 echo 'Requester:' $USER
