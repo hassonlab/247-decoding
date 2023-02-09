@@ -19,7 +19,7 @@ def one_samp_perm(x, nperms):
   dist = np.zeros(nperms)
   for i in range(nperms):
       dist[i] = np.random.choice(x, n, replace=True).mean()
-  val = np.sum(dist > 0.5)
+  val = np.sum(dist > 0.5) # 0.5 is specific for AUCROC
   p_value = 1 - val / nperms
   return p_value
 
@@ -36,7 +36,7 @@ def paired_permutation(x, y, nperms):
 
 
 def plot(args):
-
+    sub_id = args.sig.split('-')[1]
     nperms = 10000
     # Either read in the given results or generate them on the fly
     if args.input is not None:
@@ -65,8 +65,6 @@ def plot(args):
         csv_2 = csv_1.replace("IFG","PRE")
         results2 = pd.read_csv(csv_2)
         aucrocs2 = results2['rocauc'].values 
-
-
         pair_pval = paired_permutation(aucrocs2, aucrocs, nperms)
         pair_pvals.append(pair_pval)
     
@@ -96,18 +94,6 @@ def plot(args):
 
         assert not y.isna().all(), "all nans"
 
-        
-        if args.yerr is not None:
-            lags = np.arange(-4000,4100,100)
-            yem2 = []
-            for lag in lags:
-                lag_folder = os.path.join("results", sub_df.model.unique()[0], str(lag))
-                csv_1 = os.path.join(lag_folder, "ensemble", "avg_test_topk_rocaauc_df.csv")
-                results = pd.read_csv(csv_1).rocauc
-                yem2.append(results.sem())
-            plt.fill_between(x, y - yem2, y + yem2, alpha=0.4)
-
-
         if args.label is not None:
             label = sub_df.iloc[0][args.label]
         if label == "IFG":
@@ -118,16 +104,34 @@ def plot(args):
             color = "#190136"
         elif label == "Pre-sh":
             color = "#013611"
+    
+        
+        if args.yerr is not None:
+            lags = np.arange(-4000,4100,100)
+            yem2 = []
+            for lag in lags:
+                lag_folder = os.path.join("results", sub_df.model.unique()[0], str(lag))
+                csv_1 = os.path.join(lag_folder, "ensemble", "avg_test_topk_rocaauc_df.csv")
+                results = pd.read_csv(csv_1).rocauc
+                yem2.append(results.sem())
+            plt.fill_between(x, y - yem2, y + yem2, alpha=0.2, color = color)
 
         plt.plot(x, y, label=label, color=color)
 
 
     lags = np.array(lag_names)
-    # plt.grid()
+    if sub_id == '717':
+        plt.title('Participant 1', fontweight='bold')
+    elif sub_id == '742':
+        plt.title('Participant 2', fontweight='bold')
+    elif sub_id == '798':
+        plt.title('Participant 3', fontweight='bold')
+    elif sub_id =='all3':
+        plt.title('All Participants', fontweight='bold')
+
     plt.legend(loc="upper left")
-    plt.xlabel(args.x)
-    plt.ylabel(args.y)
-    plt.ylabel("ROC-AUC")
+    plt.xlabel('Time (ms)', fontweight='bold')
+    plt.ylabel("ROC-AUC", fontweight='bold')
     plt.ylim(0.45, 0.72)
     plt.yticks([0.5, 0.55, 0.6, 0.65, 0.7])
     plt.axhline(minP)
