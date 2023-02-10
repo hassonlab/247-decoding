@@ -46,10 +46,11 @@ SID := 676
 SID := 625
 
 SID := 777
+PLOT_SID := all3
 SIG_FN := --sig-elec-file data/129-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH.csv
 SIG_FN := --sig-elec-file data/164-phase-5000-sig-elec-gpt2xl50d-perElec-FDR-01-LH.csv
 SIG_FN := --sig-elec-file data/160-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH_newVer.csv
-SIG_FN := --sig-elec-file data/0shot-regions/717-PRE.csv
+SIG_FN := --sig-elec-file data/0shot-regions/$(PLOT_SID)-IFG.csv
 
 NE = 160
 
@@ -130,7 +131,8 @@ run-decoding:
 	        $(EMBP) \
 	        $(MISC) \
 			$(SH) \
-	        --model s-717-PRE_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)3; \
+	        --model s-$(PLOT_SID)-IFG_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)3; \
+
 	done
 
 # In case you need to run the ensemble on its own
@@ -161,22 +163,26 @@ plots: aggregate-results plot sync-plots
 	    #     "model == 's-777_e-164_t-regress_m-comp_e-gpt2-xl_p-borgcls_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
 	    #     "model == 's-777_e-164_t-regress_m-comp_e-gpt2-xl_p-vsr_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
 
+
+
 plot:
 	mkdir -p results/plots/
 	python code/plot.py \
-	    --q "model == 's-717-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	        "model == 's-717-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	        "model == 's-717-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	        "model == 's-717-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	    --sig s-717-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-02/ \
+	    --q "model == 's-$(PLOT_SID)-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	        "model == 's-$(PLOT_SID)-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	        "model == 's-$(PLOT_SID)-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
+	        "model == 's-$(PLOT_SID)-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
+		--sig s-$(PLOT_SID)-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03 \
 		--labels IFG Pre IFG-sh Pre-sh \
 	    --x lag \
 	    --y avg_test_nn_rocauc_test_w_avg \
-	    --output results/plots/0shot-742-test
+		--yerr avg_test_nn_rocauc_stddev \
+	    --output results/plots/0shot-$(PLOT_SID)-sig
+
 
 aggregate-results:
 	python code/aggregate_results.py
-	cp -f results/aggregate.csv /tigress/$(USER)/0shot-decoding-results/
+
 
 
 # -----------------------------------------------------------------------------
@@ -194,7 +200,7 @@ setup:
 # If you have pickled the data yourself, then you can just link to it
 link-data:
 	echo "revisit this:"
-	ln -sf $(shell dirname `pwd`)/0shot-pickling/results/* data/
+	ln -sf /scratch/gpfs/kw1166/0shot-pickling/results/* data/
 	ln -s /projects/HASSON/247/data/podcast-data/*.csv data/
 
 # Otherwise, you can download it from google cloud bucket
