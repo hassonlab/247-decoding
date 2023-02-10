@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import glob
 import os
+
 from aggregate_results import get_results
 from statsmodels.stats import multitest
 from scipy.stats import permutation_test
@@ -85,13 +86,13 @@ def plot(args):
 
     issig = (mean_aucrocs > minP) & (pair_pcorrs < 0.01)
     siglags = issig.nonzero()[0]
+
     # Plot each query as a separate line
     for query, label in zip(args.q, args.labels):
 
         sub_df = df.query(query).sort_values(by=args.x)
         x = sub_df[args.x]
         y = sub_df[args.y]
-
         assert not y.isna().all(), "all nans"
 
         if args.label is not None:
@@ -103,8 +104,7 @@ def plot(args):
         elif label == "IFG-sh":
             color = "#190136"
         elif label == "Pre-sh":
-            color = "#013611"
-    
+            color = "#013611"   
         
         if args.yerr is not None:
             lags = np.arange(-4000,4100,100)
@@ -115,9 +115,7 @@ def plot(args):
                 results = pd.read_csv(csv_1).rocauc
                 yem2.append(results.sem())
             plt.fill_between(x, y - yem2, y + yem2, alpha=0.2, color = color)
-
         plt.plot(x, y, label=label, color=color)
-
 
     lags = np.array(lag_names)
     if sub_id == '717':

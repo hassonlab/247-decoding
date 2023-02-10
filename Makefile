@@ -101,8 +101,8 @@ LAGX := 1
 
 # Choose the lags to run for in ms
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS = 0
 LAGS = $(shell seq -4000 100 4000)
+LAGS = 0
 
 
 # shuffle
@@ -132,6 +132,7 @@ run-decoding:
 	        $(MISC) \
 			$(SH) \
 	        --model s-$(PLOT_SID)-IFG_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)3; \
+
 	done
 
 # In case you need to run the ensemble on its own
@@ -177,6 +178,7 @@ plot:
 	    --y avg_test_nn_rocauc_test_w_avg \
 		--yerr avg_test_nn_rocauc_stddev \
 	    --output results/plots/0shot-$(PLOT_SID)-sig
+
 
 aggregate-results:
 	python code/aggregate_results.py
