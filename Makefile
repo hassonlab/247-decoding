@@ -87,8 +87,9 @@ MODES := comp
 # Choose the command to run: python runs locally, echo is for debugging, sbatch
 # is for running on SLURM all lags in parallel.
 CMD = echo
-CMD = python
-CMD = sbatch --array=1-$(NL) code/run.sh
+# CMD = python
+# CMD = sbatch --array=1-$(NL) code/run.sh
+
 
 # misc flags
 MISC := --epochs 1

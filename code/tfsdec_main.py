@@ -3,6 +3,7 @@ import glob
 import json
 import operator
 import os
+import sys
 import pickle
 import random as python_random
 import string
@@ -13,6 +14,8 @@ from contextlib import redirect_stdout
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
 import transformers
 from sklearn.decomposition import PCA
 from sklearn.model_selection import KFold, StratifiedKFold, StratifiedGroupKFold
@@ -137,6 +140,27 @@ def arg_parser():
         "1 = progress bar, 2 = one line per epoch.",
     )
 
+    # If running the code in debug mode
+    gettrace = getattr(sys, "gettrace", None)
+
+    if gettrace():
+        sys.argv = [
+            "code/tfsdec_main.py",
+            "--signal-pickle", "/scratch/gpfs/hgazula/247-decoding/data/podcast/777/pickles/777_binned_signal.pkl",
+            "--label-pickle", "/scratch/gpfs/hgazula/247-decoding/data/podcast/777/pickles/777_full_gpt2-xl_cnxt_1023_layer_48_embeddings.pkl",
+             "--lags", "-4000",
+            "--batch-size", "32",
+             "--lr", "0.00005", "--dropout", "0.20",
+              "--reg", "0.35", "--reg-head", "0.05",
+               "--conv-filters", "160", "--epochs", "1000", "--patience", "150",
+                "--half-window", "312.5", "--n-weight-avg", "20", 
+                 "--mode", "comp", "--min-dev-freq", "0", "--min-test-freq", '0',
+                  "--verbose", "0",
+                  "--sig-elec-file", "/scratch/gpfs/hgazula/247-decoding/data/0shot-regions/all3-IFG.csv",
+                   "--align-with", "gpt2", "--pca", "50", 
+                   "--model", "s-all3-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03"
+        ]
+
     args = parser.parse_args()
 
     if args.lag is None:
@@ -250,6 +274,10 @@ def pitom(input_shapes, n_classes):
     input_cnn = tf.keras.Input(shape=input_shapes[0])
 
     prev_layer = input_cnn
+    # print('print input_shapes: {}'.format(input_shapes))
+    # print('print n_classes: {}'.format(n_classes))
+    # print('print input_cnn: {}'.format(input_cnn))
+    # exit()
     for filters, kernel_size in desc:
         if filters == "max":
             prev_layer = tf.keras.layers.MaxPooling1D(
@@ -502,7 +530,13 @@ def load_trained_models(k, args):
 
 def train_regression(x_train, y_train, x_dev, y_dev, args):
     """Train a regression model"""
+    
     model = pitom([x_train.shape[1:]], n_classes=y_train.shape[1])
+    
+    # added for linear regression implementation
+    # model = Sequential()
+    # model.add(Dense(y_train.shape[1],input_shape=x_train.shape[1:]))
+    
     model.compile(
         loss="mse",
         optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr),
@@ -571,6 +605,8 @@ def train_model(model, x_train, y_train, x_dev, y_dev, args):
 
     # Store final value of each metric
     results = {k: float(v[-1]) for k, v in history.history.items()}
+    # print('print results: {}'.format(results))
+    # exit()
     return model, results
 
 
