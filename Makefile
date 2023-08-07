@@ -46,7 +46,7 @@ SID := 676
 SID := 625
 
 SID := 777
-PLOT_SID := all3
+PLOT_SID := 798
 SIG_FN := --sig-elec-file data/129-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH.csv
 SIG_FN := --sig-elec-file data/164-phase-5000-sig-elec-gpt2xl50d-perElec-FDR-01-LH.csv
 SIG_FN := --sig-elec-file data/160-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH_newVer.csv
@@ -61,9 +61,9 @@ EMBN = glove50
 PCA :=
 
 # gpt2
-EMB := $(SID)_full_gpt2-xl_cnxt_1023_layer_48_embeddings.pkl
-EMBN = gpt2xl
-PCA := --pca 50
+# EMB := $(SID)_full_gpt2-xl_cnxt_1024_layer_48_embeddings.pkl
+# EMBN = gpt2xl
+# PCA := --pca 50
 
 # blenderbot
 # EMB := blenderbot-small
@@ -72,6 +72,8 @@ PCA := --pca 50
 # Align with others
 ALIGN_WITH = --align-with gpt2 blenderbot_small_90M
 ALIGN_WITH = --align-with gpt2
+ALIGN_WITH = --align-with
+ALIGN_WITH = --align-with glove gpt2
 
 # Minimum word frequency
 MWF := 0
@@ -86,9 +88,9 @@ MODES := comp
 
 # Choose the command to run: python runs locally, echo is for debugging, sbatch
 # is for running on SLURM all lags in parallel.
-CMD = echo
-# CMD = python
-# CMD = sbatch --array=1-$(NL) code/run.sh
+# CMD = echo
+CMD = python
+CMD = sbatch --array=1-$(NL) code/run.sh
 
 
 # misc flags
@@ -103,6 +105,7 @@ LAGX := 1
 # Choose the lags to run for in ms
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
 LAGS = 0
+LAGS = $(shell seq -3520 192 3392)
 LAGS = $(shell seq -4000 100 4000)
 
 
@@ -132,7 +135,7 @@ run-decoding:
 	        $(EMBP) \
 	        $(MISC) \
 			$(SH) \
-	        --model s-$(PLOT_SID)-IFG_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)3; \
+	        --model s-$(PLOT_SID)-IFG_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)-aligned; \
 	done
 
 # In case you need to run the ensemble on its own
@@ -164,23 +167,25 @@ plots: aggregate-results plot sync-plots
 	    #     "model == 's-777_e-164_t-regress_m-comp_e-gpt2-xl_p-vsr_mwf-5' and ensemble == True and lag >= -512 and lag <= 512" \
 
 
-
 plot:
 	mkdir -p results/plots/
 	python code/plot.py \
-	    --q "model == 's-$(PLOT_SID)-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	        "model == 's-$(PLOT_SID)-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	        "model == 's-$(PLOT_SID)-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
-	        "model == 's-$(PLOT_SID)-PRE_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03-sh' and ensemble == True and lag >= -4000 and lag <= 4000" \
-		--sig s-$(PLOT_SID)-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-03 \
-		--labels IFG Pre IFG-sh Pre-sh \
+	    --q "model == 's-$(PLOT_SID)-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-0-aligned' and ensemble == True and lag >= -4000 and lag <= 4000" \
+			"model == 's-$(PLOT_SID)-IFG_e-160_t-regress_m-comp_e-glove50_p-0shot_mwf-0-aligned' and ensemble == True and lag >= -4000 and lag <= 4000" \
+		--sig1 s-$(PLOT_SID)-IFG_e-160_t-regress_m-comp_e-gpt2xl_p-0shot_mwf-0-aligned \
+		--sig2 s-$(PLOT_SID)-IFG_e-160_t-regress_m-comp_e-glove50_p-0shot_mwf-0-aligned \
+		--labels GPT2 GloVe \
 	    --x lag \
 	    --y avg_test_nn_rocauc_test_w_avg \
 		--yerr avg_test_nn_rocauc_stddev \
-	    --output results/plots/0shot-$(PLOT_SID)-sig
+		--results results/0shot-decoding-aligned-2 \
+		--input aggregate-aligned2.csv \
+	    --output results/plots/0shot-$(PLOT_SID)-aligned
 
 aggregate-results:
-	python code/aggregate_results.py
+	python code/aggregate_results.py \
+		--results results/0shot-decoding-aligned-2/ \
+		--output results/aggregate-aligned2.csv
 
 
 
