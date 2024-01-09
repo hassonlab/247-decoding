@@ -41,14 +41,14 @@ HYPER_PARAMS := --batch-size 256 --lr 0.00025 --dropout 0.21 --reg 0.003 --reg-h
 SID := 625
 BC := 
 
-SID := 676
-BC := --bad-convos 38 39
+# SID := 676
+# BC := --bad-convos 38 39
 
 # SID := 7170
 # # BC := --bad-convos 2 23 24
 # BC :=
 
-SIG_FN := --sig-elec-file data/tfs-sig-file-676-sig-1.0-comp.csv
+SIG_FN := --sig-elec-file data/tfs-sig-file-glove-625-comp.csv
 # SIG_FN := --sig-elec-file data/717_21-conv-elec-189.csv
 
 # SID := 777
@@ -60,39 +60,21 @@ NE = 160
 
 # Choose embedddings
 # glove
-EMB := $(SID)_trimmed_glove50_layer_01_embeddings.pkl
-EMBN = glove50
+EMBN := glove50
+CNTX := 1
+LAYER_IDX := 1
 PCA :=
 
 # gpt2
-# EMB := $(SID)_trimmed_gpt2-xl_cnxt_1024_layer_48_embeddings.pkl
-# EMBN = gpt2xl
-# PCA := --pca 50
-
-# gpt2-bert
-EMB := $(SID)_trimmed_gpt2-xl-bert_cnxt_512_layer_48_embeddings.pkl
-EMBN = gpt2xl-bert
-PCA := --pca 50
-
-# blenderbot
-# EMB := $(SID)_trimmed_blenderbot-small_layer_16_embeddings.pkl
-# EMBN := bbot
-# PCA := --pca 50
-
-# bert
-# EMB := $(SID)_trimmed_bert-base-cased_cnxt_512_layer_12_embeddings.pkl
-# EMBN = bert
-# PCA := --pca 50
-
-# bert
-# EMB := $(SID)_trimmed_bert-base-cased_cnxt_511_layer_12_embeddings.pkl
-# EMBN = bert-mask
+# EMBN = gpt2-xl
+# CNTX = 1024
+# LAYER_IDX = 24
 # PCA := --pca 50
 
 
 # Align with others
-ALIGN_WITH = --align-with gpt2
-ALIGN_WITH = --align-with gpt2 blenderbot_small_90M
+ALIGN_WITH = --align-with gpt2-xl
+ALIGN_WITH = 
 
 # Minimum word frequency
 MWF := 0
@@ -108,8 +90,8 @@ MODES := comp
 # Choose the command to run: python runs locally, echo is for debugging, sbatch
 # is for running on SLURM all lags in parallel.
 CMD = echo
+CMD = sbatch --array=1-$(NL) scripts/run.sh
 CMD = python
-CMD = sbatch --array=1-$(NL) code/run.sh
 
 # misc flags
 MISC := --epochs 1
@@ -122,8 +104,8 @@ LAGX := 1
 
 # Choose the lags to run for in ms
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS = 0
 LAGS = $(shell seq -2000 250 2000)
+LAGS = 0
 
 # Datum Modification
 DM := shiftn1
@@ -138,9 +120,9 @@ DM := all
 # Note that run.sh will run an ensemble as well.
 run-decoding:
 	for mode in $(MODES); do \
-	    $(CMD) code/tfsdec_main.py \
+	    $(CMD) scripts/tfsdec_main.py \
 	        --signal-pickle data/$(PJCT)/$(SID)/pickles/$(SID)_binned_signal.pkl \
-	        --label-pickle data/$(PJCT)/$(SID)/pickles/$(EMB) \
+	        --label-dir data/$(PJCT)/$(SID)/pickles/embeddings/$(EMBN)/full \
 	        --lags $(LAGS) \
 			$(BC) \
 	        $(HYPER_PARAMS) \
@@ -150,18 +132,19 @@ run-decoding:
 		$(SIG_FN) \
 		$(ALIGN_WITH) \
 		--datum-mod $(DM) \
+	    --context-len $(CNTX) \
+	    --layer-idx $(LAYER_IDX) \
 	        $(PCA) \
 	        $(MODE) \
-	        $(EMBP) \
 	        $(MISC) \
-	        --model latest3foldafter-s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)-sig-$(DM); \
+	        --model decoding-s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)-sig-$(DM); \
 	done
 
 # In case you need to run the ensemble on its own
 run-ensemble:
 	for mode in $(MODES); do \
 		$(CMD) \
-		    code/tfsdec_main.py \
+		    scripts/tfsdec_main.py \
 		    --signal-pickle data/$(SID)_binned_signal.pkl \
 		    --label-pickle data/$(SID)_$${mode}_labels_MWF30.pkl \
 		    --lags $(LAGS) \
@@ -188,7 +171,7 @@ plots: aggregate-results plot sync-plots
 plot:
 	rm -f results/plots/*
 	mkdir -p results/plots/
-	python code/plot.py \
+	python scripts/plot.py \
 	    --q "model == 'latest3foldafter-s-625_e-160_t-regress_m-comp_e-bbot_p-vsr_mwf-0-sig' and ensemble == True" \
 	        "model == 'latest3foldafter-s-625_e-160_t-regress_m-prod_e-bbot_p-vsr_mwf-0-sig' and ensemble == True" \
 			"model == 'latest3foldafter-s-625_e-160_t-regress_m-comp_e-bbot_p-vsr_mwf-0-sig-shift' and ensemble == True" \
@@ -210,7 +193,7 @@ plot:
 	rsync -av results/plots/ ~/tigress/247-decoding-results/
 
 aggregate-results:
-	python code/aggregate_results.py
+	python scripts/aggregate_results.py
 	cp -f results/aggregate.csv /tigress/kw1166/247-decoding-results/
 
 
@@ -219,11 +202,11 @@ aggregate-results:
 # -----------------------------------------------------------------------------
 
 setup:
-	mkdir -p /scratch/gpfs/$USER/247-decoding/{data,results,logs}
-	ln -s /scratch/gpfs/$USER/247-decoding/data
-	ln -s /scratch/gpfs/$USER/247-decoding/logs
-	ln -s /scratch/gpfs/$USER/247-decoding/results
-	@echo ln -s /scratch/gpfs/$USER/247-pickling/results/* /scratch/gpfs/$USER/247-decoding/data/
+	mkdir -p /scratch/gpfs/$(USER)/247-decoding/{data,results,logs}
+	# ln -s /scratch/gpfs/$(USER)/247-decoding/data
+	# ln -s /scratch/gpfs/$(USER)/247-decoding/logs
+	# ln -s /scratch/gpfs/$(USER)/247-decoding/results
+	ln -s /scratch/gpfs/$(USER)/247-pickling/results/* /scratch/gpfs/$(USER)/247-decoding/data/
 
 
 # If you have pickled the data yourself, then you can just link to it

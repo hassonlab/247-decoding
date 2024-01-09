@@ -47,7 +47,9 @@ def arg_parser():
         help="[prod]uction or [comp]rehension",
     )
     parser.add_argument("--signal-pickle", type=str, required=True, help="")
-    parser.add_argument("--label-pickle", type=str, required=True, help="")
+    parser.add_argument("--label-dir", type=str, required=True, help="")
+    parser.add_argument("--context-len", type=int, required=True, help="")
+    parser.add_argument("--layer-idx", type=int, required=True, help="")
     parser.add_argument("--half-window", type=float, default=312.5, help="")
     parser.add_argument("--pca", type=int, default=None, help="")
     parser.add_argument("--min-word-freq", type=int, default=0)
@@ -87,9 +89,7 @@ def arg_parser():
         help="Number of epochs with no improvement after "
         "which training will be stopped.",
     )
-    parser.add_argument(
-        "--lm-head", action="store_true", help="NotImplementedError"
-    )
+    parser.add_argument("--lm-head", action="store_true", help="NotImplementedError")
     parser.add_argument(
         "--ensemble",
         action="store_true",
@@ -213,9 +213,7 @@ def shift_emb(args, datum):
     before_shift_num = len(datum.index)
     for i in np.arange(shift_num):
         datum["embeddings"] = datum.embeddings.shift(step)
-        datum = datum[
-            datum.conversation_id.shift(step) == datum.conversation_id
-        ]
+        datum = datum[datum.conversation_id.shift(step) == datum.conversation_id]
         if (
             "blenderbot-small" in args.label_pickle.lower()
             or "bert" in args.label_pickle.lower()
@@ -228,7 +226,6 @@ def shift_emb(args, datum):
 
 
 def mod_datum(args, df):
-
     if "shift" in args.datum_mod:
         df = shift_emb(args, df)
 
@@ -236,13 +233,35 @@ def mod_datum(args, df):
 
 
 def load_pickles(args):
-    with open(args.label_pickle, "rb") as fh:
-        label_folds = pickle.load(fh)
+    def load_pickle(file):
+        print(f"Loading {file}")
+        with open(file, "rb") as fh:
+            datum = pickle.load(fh)
+        return datum
 
-    with open(args.signal_pickle, "rb") as fh:
-        signal_d = pickle.load(fh)
+    def load_datum(file):
+        datum = load_pickle(file)
+        df = pd.DataFrame.from_dict(datum)
+        return df
+
+    base_pickle = os.path.join(args.label_dir, "base_df.pkl")
+    emb_pickle = os.path.join(
+        args.label_dir, f"cnxt_{args.context_len:04}", f"layer_{args.layer_idx:02}.pkl"
+    )
+    base_df = load_datum(base_pickle)
+    emb_df = load_datum(emb_pickle)
+    if "whisper" in args.label_dir:  ## HACK
+        base_df = base_df.dropna(subset=["onset", "offset"])
+        assert len(base_df) == len(emb_df)
+
+    if len(emb_df) != len(base_df):
+        df = pd.merge(base_df, emb_df, left_index=True, right_index=True)
+    else:
+        base_df.reset_index(drop=False, inplace=True)
+        df = pd.concat([base_df, emb_df], axis=1)
 
     print("Signals pickle info")
+    signal_d = load_pickle(args.signal_pickle)
     for key in signal_d.keys():
         print(
             f"key: {key}, \t "
@@ -290,7 +309,7 @@ def load_pickles(args):
         electrodes = np.arange(64)  # NOTE hardcoded
         signals = signals[..., electrodes]
 
-    return signals, stitch_index, label_folds
+    return signals, stitch_index, df
 
 
 def pitom(input_shapes, n_classes):
@@ -418,7 +437,6 @@ def get_decoder(args):
 
 
 def extract_signal_from_fold(examples, stitch_index, signals, args):
-
     fs = 16  # 16 for binned, otherwise 512
     shift_fs = int(args.lag / 1000 * fs)
     half_window = int(args.half_window / 1000 * fs)
@@ -427,9 +445,7 @@ def extract_signal_from_fold(examples, stitch_index, signals, args):
     stitches = np.array(stitch_index)
     x, w, z = [], [], []
     for label in examples:
-        bin_index = int(
-            label["adjusted_onset"] // 32
-        )  # divide by 32 for binned signal
+        bin_index = int(label["adjusted_onset"] // 32)  # divide by 32 for binned signal
         bin_rank = (stitches <= bin_index).nonzero()[0][-1]
         bin_start, bin_stop = stitch_index[bin_rank], stitch_index[bin_rank + 1]
 
@@ -458,7 +474,6 @@ def extract_signal_from_fold(examples, stitch_index, signals, args):
 
 
 def get_fold_data(k, df, stitch, X, args):
-
     labels = df.to_dict(orient="records")
 
     # Get masks
@@ -467,9 +482,7 @@ def get_fold_data(k, df, stitch, X, args):
     f_test = [ex for ex in labels if ex[f"fold{k}"] == "test"]
 
     # Get signal
-    x_train, w_train, z_train = extract_signal_from_fold(
-        f_train, stitch, X, args
-    )
+    x_train, w_train, z_train = extract_signal_from_fold(f_train, stitch, X, args)
     x_dev, w_dev, z_dev = extract_signal_from_fold(f_dev, stitch, X, args)
     x_test, w_test, z_test = extract_signal_from_fold(f_test, stitch, X, args)
 
@@ -486,9 +499,7 @@ def get_fold_data(k, df, stitch, X, args):
         class_list = set(
             map(
                 lambda x: x[0],
-                filter(
-                    lambda x: x[1] >= args.min_dev_freq, counter_train.items()
-                ),
+                filter(lambda x: x[1] >= args.min_dev_freq, counter_train.items()),
             )
         )
         mask = np.array([cls in class_list for cls in w_dev], dtype=np.bool)
@@ -498,9 +509,7 @@ def get_fold_data(k, df, stitch, X, args):
         class_list = set(
             map(
                 lambda x: x[0],
-                filter(
-                    lambda x: x[1] >= args.min_test_freq, counter_train.items()
-                ),
+                filter(lambda x: x[1] >= args.min_test_freq, counter_train.items()),
             )
         )
         mask = np.array([cls in class_list for cls in w_test], dtype=np.bool)
@@ -514,16 +523,9 @@ def get_fold_data(k, df, stitch, X, args):
     y_dev = np.array([word2index[w] for w in w_dev])
     y_test = np.array([word2index[w] for w in w_test])
 
-    assert (
-        x_train.shape[0]
-        == y_train.shape[0]
-        == w_train.shape[0]
-        == z_train.shape[0]
-    )
+    assert x_train.shape[0] == y_train.shape[0] == w_train.shape[0] == z_train.shape[0]
     assert x_dev.shape[0] == y_dev.shape[0] == w_dev.shape[0] == z_dev.shape[0]
-    assert (
-        x_test.shape[0] == y_test.shape[0] == w_test.shape[0] == z_test.shape[0]
-    )
+    assert x_test.shape[0] == y_test.shape[0] == w_test.shape[0] == z_test.shape[0]
 
     results = {}
     results["n_train"] = x_train.shape[0]
@@ -584,9 +586,7 @@ def train_regression(x_train, y_train, x_dev, y_dev, args):
 def train_classifier(x_train, y_train, x_dev, y_dev, args):
     """Train a classifier model"""
     model = pitom([x_train.shape[1:]], n_classes=None)
-    model = tf.keras.Model(
-        inputs=model.input, outputs=get_decoder(args)(model.output)
-    )
+    model = tf.keras.Model(inputs=model.input, outputs=get_decoder(args)(model.output))
     model.compile(
         loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
         optimizer=tf.keras.optimizers.Adam(lr=args.lr),
@@ -644,9 +644,7 @@ def train_model(model, x_train, y_train, x_dev, y_dev, args):
     return model, results
 
 
-def evaluate_regression(
-    models, w_train, x_test, y_test, z_test, all_data, w2i, args
-):
+def evaluate_regression(models, w_train, x_test, y_test, z_test, all_data, w2i, args):
     """
     z_test are embeddings.
     y_all are all embeddings
@@ -711,9 +709,7 @@ def evaluate_regression(
     preds = np.zeros((len(models), len(x_test), n_classes), dtype=np.float64)
     for j, model in enumerate(models):
         model_preds = model.predict(x_test)
-        preds[j] = get_class_predictions_kd(
-            model_preds, z_all, y_all, n_classes
-        )
+        preds[j] = get_class_predictions_kd(model_preds, z_all, y_all, n_classes)
     preds = np.average(preds, axis=0)  # average all predictions
 
     res = evaluate_topk(
@@ -731,7 +727,6 @@ def evaluate_regression(
 
 
 def evaluate_classifier(models, w_train, x_test, y_test, w2i, args):
-
     n_classes = args.n_classes
     w_train_freq = Counter(w_train)
     y_test_1hot = tf.keras.utils.to_categorical(y_test, n_classes)
@@ -844,8 +839,7 @@ def create_folds(df, num_folds, split_str=None, groupkey="label"):
     return df
 
 
-def prepare_data(df, args):
-
+def prepare_data(args, df):
     df["label"] = df.lemmatized_word.str.lower()
 
     # Clean up data
@@ -867,7 +861,7 @@ def prepare_data(df, args):
 
     # Filter out criteria
     NONWORDS = {"hm", "huh", "mhm", "mm", "oh", "uh", "uhuh", "um"}
-    common = df.in_glove
+    common = df.in_glove50
     for model in args.align_with:
         common = common & df[f"in_{model}"]
     nonword_mask = df.word.str.lower().apply(lambda x: x in NONWORDS)
@@ -882,9 +876,7 @@ def prepare_data(df, args):
     df = df[op(df.speaker, "Speaker1")]
 
     # Remove bad conversations
-    df = df.loc[
-        ~df["conversation_id"].isin(args.bad_convos)
-    ]  # filter bad convos
+    df = df.loc[~df["conversation_id"].isin(args.bad_convos)]  # filter bad convos
 
     assert df.size > 0, "No data left after processing criteria"
     assert df.adjusted_onset.notna().all(), "nan onsets"
@@ -914,16 +906,10 @@ def save_results(fold_results, args):
         merged = pd.concat(
             (dfs["avg_test_nn_rocauc_df"], dfs["avg_test_nn_topk_df"]), axis=1
         )
-        merged.to_csv(
-            os.path.join(args.save_dir, "avg_test_topk_rocaauc_df.csv")
-        )
+        merged.to_csv(os.path.join(args.save_dir, "avg_test_topk_rocaauc_df.csv"))
     if "avg_test_rocauc_df" in dfs and "avg_test_topk_df" in dfs:
-        merged = pd.concat(
-            (dfs["avg_test_rocauc_df"], dfs["avg_test_topk_df"]), axis=1
-        )
-        merged.to_csv(
-            os.path.join(args.save_dir, "avg_test_topk_rocaauc_df.csv")
-        )
+        merged = pd.concat((dfs["avg_test_rocauc_df"], dfs["avg_test_topk_df"]), axis=1)
+        merged.to_csv(os.path.join(args.save_dir, "avg_test_topk_rocaauc_df.csv"))
 
     # Remove all non-serializable objects
     bads = [k for k, v in results.items() if isinstance(v, pd.DataFrame)]
@@ -954,9 +940,8 @@ if __name__ == "__main__":
     args = arg_parser()
 
     # Load data
-    signals, stitch_index, label_folds = load_pickles(args)
-    df = pd.DataFrame(label_folds)  # ['labels'])  # NOTE for trimmed only?
-    df = prepare_data(df, args)  # prune
+    signals, stitch_index, df = load_pickles(args)
+    df = prepare_data(args, df)  # prune
 
     # Run
     histories = []
@@ -995,9 +980,7 @@ if __name__ == "__main__":
 
         # Evaluate
         if args.classify:
-            res = evaluate_classifier(
-                models, w_train, x_test, y_test, w2i, args
-            )
+            res = evaluate_classifier(models, w_train, x_test, y_test, w2i, args)
             results.update(res)
         else:
             w_all = np.concatenate((w_train, w_dev, w_test), axis=0)
