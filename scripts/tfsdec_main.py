@@ -215,21 +215,14 @@ def shift_emb(args, datum):
         datum["embeddings"] = datum.embeddings.shift(step)
         datum = datum[datum.conversation_id.shift(step) == datum.conversation_id]
         if (
-            "blenderbot-small" in args.label_pickle.lower()
-            or "bert" in args.label_pickle.lower()
+            "blenderbot-small" in args.label_dir.lower()
+            or "bert" in args.label_dir.lower()
         ):
             datum = datum[datum.production.shift(step) == datum.production]
     print(
         f"Shifting {shift_num} times resulted in {before_shift_num - len(datum.index)} less words"
     )
     return datum
-
-
-def mod_datum(args, df):
-    if "shift" in args.datum_mod:
-        df = shift_emb(args, df)
-
-    return df
 
 
 def load_pickles(args):
@@ -868,8 +861,8 @@ def prepare_data(args, df):
     freq_mask = df.word_freq_overall >= args.min_word_freq
     df = df[common & freq_mask & ~nonword_mask]
 
-    if args.datum_mod != "all":
-        df = mod_datum(args, df)
+    if "shift" in args.datum_mod:
+        df = shift_emb(args, df)
 
     # Keep production or comprehension
     op = operator.eq if "prod" in args.mode.lower() else operator.ne

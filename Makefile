@@ -48,8 +48,9 @@ BC :=
 # # BC := --bad-convos 2 23 24
 # BC :=
 
-SIG_FN := --sig-elec-file data/tfs-sig-file-glove-625-comp.csv
 # SIG_FN := --sig-elec-file data/717_21-conv-elec-189.csv
+# SIG_FN := --sig-elec-file data/tfs-sig-file-glove-625-comp.csv
+SIG_FN := 
 
 # SID := 777
 # SIG_FN := --sig-elec-file data/129-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH.csv
@@ -66,10 +67,10 @@ LAYER_IDX := 1
 PCA :=
 
 # gpt2
-# EMBN = gpt2-xl
-# CNTX = 1024
-# LAYER_IDX = 24
-# PCA := --pca 50
+EMBN = gpt2-xl
+CNTX = 1024
+LAYER_IDX = 48
+PCA := --pca 50
 
 
 # Align with others
@@ -80,8 +81,8 @@ ALIGN_WITH =
 MWF := 0
 
 # Choose which modes to run for: production, comprehension, or both.
-MODES := prod comp
 MODES := prod
+MODES := prod comp
 MODES := comp
 
 # Running options
@@ -90,8 +91,8 @@ MODES := comp
 # Choose the command to run: python runs locally, echo is for debugging, sbatch
 # is for running on SLURM all lags in parallel.
 CMD = echo
-CMD = sbatch --array=1-$(NL) scripts/run.sh
 CMD = python
+CMD = sbatch --array=1-$(NL) scripts/run.sh
 
 # misc flags
 MISC := --epochs 1
@@ -104,13 +105,13 @@ LAGX := 1
 
 # Choose the lags to run for in ms
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
-LAGS = $(shell seq -2000 250 2000)
 LAGS = 0
+LAGS = -2000 $(shell seq -1000 250 2000)
 
 # Datum Modification
 DM := shiftn1
-DM := shift
 DM := all
+DM := shift
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -172,24 +173,14 @@ plot:
 	rm -f results/plots/*
 	mkdir -p results/plots/
 	python scripts/plot.py \
-	    --q "model == 'latest3foldafter-s-625_e-160_t-regress_m-comp_e-bbot_p-vsr_mwf-0-sig' and ensemble == True" \
-	        "model == 'latest3foldafter-s-625_e-160_t-regress_m-prod_e-bbot_p-vsr_mwf-0-sig' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-comp_e-bbot_p-vsr_mwf-0-sig-shift' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-prod_e-bbot_p-vsr_mwf-0-sig-shift' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-comp_e-glove50_p-vsr_mwf-0-sig' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-prod_e-glove50_p-vsr_mwf-0-sig' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-comp_e-gpt2xl_p-vsr_mwf-0-sig' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-prod_e-gpt2xl_p-vsr_mwf-0-sig' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-comp_e-gpt2xl_p-vsr_mwf-0-sig-shift' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-prod_e-gpt2xl_p-vsr_mwf-0-sig-shift' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-comp_e-gpt2xl-bert_p-vsr_mwf-0-sig-shift' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-prod_e-gpt2xl-bert_p-vsr_mwf-0-sig-shift' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-comp_e-bert_p-vsr_mwf-0-sig-shift' and ensemble == True" \
-			"model == 'latest3foldafter-s-625_e-160_t-regress_m-prod_e-bert_p-vsr_mwf-0-sig-shift' and ensemble == True" \
-	    --labels comp-bbot prod-bbot comp-bbot-n prod-bbot-n comp-glove prod-glove comp-gpt2 prod-gpt2 comp-gpt2-n prod-gpt2-n comp-gpt2-n-bert prod-gpt2-n-bert comp-bert prod-bert  \
+	    --q "model == 'decoding-s-625_e-160_t-regress_m-prod_e-glove50_p-vsr_mwf-0-sig-all' and ensemble == True" \
+	    	"model == 'decoding-s-625_e-160_t-regress_m-comp_e-glove50_p-vsr_mwf-0-sig-all' and ensemble == True" \
+	    	"model == 'decoding-s-625_e-160_t-regress_m-prod_e-gpt2-xl_p-vsr_mwf-0-sig-shift' and ensemble == True" \
+	    	"model == 'decoding-s-625_e-160_t-regress_m-comp_e-gpt2-xl_p-vsr_mwf-0-sig-shift' and ensemble == True" \
+	    --labels prod-glove comp-glove prod-gpt2 comp-gpt2  \
 	    --x lag \
 	    --y avg_test_nn_rocauc_test_w_avg \
-	    --output results/plots/625-all
+	    --output results/plots/625-new
 	rsync -av results/plots/ ~/tigress/247-decoding-results/
 
 aggregate-results:
