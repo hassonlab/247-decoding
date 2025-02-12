@@ -3,7 +3,6 @@ import glob
 import json
 import operator
 import os
-import pickle
 import random as python_random
 import string
 import uuid
@@ -24,6 +23,7 @@ from evaluate import (
     get_class_predictions,
     get_class_predictions_kd,
 )
+from tfsdec_read_datum import read_datum, load_pickle, load_datum, create_folds
 
 
 def set_seed(seed=42):
@@ -56,8 +56,13 @@ def arg_parser():
     parser.add_argument("--align-with", nargs="*", type=str, default=[])
     parser.add_argument("--min-dev-freq", type=int, default=-1)
     parser.add_argument("--min-test-freq", type=int, default=-1)
+    # new stuff
     parser.add_argument("--bad-convos", nargs="*", type=int, default=[])
     parser.add_argument("--datum-mod", type=str, default="all")
+    parser.add_argument("--emb-mod", type=str, default="")
+    parser.add_argument("--emb-type", type=str, required=True, help="")
+    parser.add_argument("--normalize", nargs="?", type=str, default=None)
+    parser.add_argument("--exclude-nonwords", action="store_true")
 
     # Training args
     parser.add_argument(
@@ -194,7 +199,7 @@ def shift_emb(args, datum):
     Returns:
         DataFrame: datum with shifted embeddings
     """
-    partial = args.datum_mod[args.datum_mod.find("shift") + 9 :]
+    partial = args.emb_mod[args.emb_mod.find("shift") + 9 :]
 
     if partial.find("-") >= 0:
         partial = partial[: partial.find("-")]
@@ -226,32 +231,6 @@ def shift_emb(args, datum):
 
 
 def load_pickles(args):
-    def load_pickle(file):
-        print(f"Loading {file}")
-        with open(file, "rb") as fh:
-            datum = pickle.load(fh)
-        return datum
-
-    def load_datum(file):
-        datum = load_pickle(file)
-        df = pd.DataFrame.from_dict(datum)
-        return df
-
-    base_pickle = os.path.join(args.label_dir, "base_df.pkl")
-    emb_pickle = os.path.join(
-        args.label_dir, f"cnxt_{args.context_len:04}", f"layer_{args.layer_idx:02}.pkl"
-    )
-    base_df = load_datum(base_pickle)
-    emb_df = load_datum(emb_pickle)
-    if "whisper" in args.label_dir:  ## HACK
-        base_df = base_df.dropna(subset=["onset", "offset"])
-        assert len(base_df) == len(emb_df)
-
-    if len(emb_df) != len(base_df):
-        df = pd.merge(base_df, emb_df, left_index=True, right_index=True)
-    else:
-        base_df.reset_index(drop=False, inplace=True)
-        df = pd.concat([base_df, emb_df], axis=1)
 
     print("Signals pickle info")
     signal_d = load_pickle(args.signal_pickle)
@@ -302,7 +281,7 @@ def load_pickles(args):
         electrodes = np.arange(64)  # NOTE hardcoded
         signals = signals[..., electrodes]
 
-    return signals, stitch_index, df
+    return signals, stitch_index
 
 
 def pitom(input_shapes, n_classes):
@@ -568,7 +547,7 @@ def train_regression(x_train, y_train, x_dev, y_dev, args):
     model = pitom([x_train.shape[1:]], n_classes=y_train.shape[1])
     model.compile(
         loss="mse",
-        optimizer=tf.keras.optimizers.Adam(lr=args.lr),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr),
         metrics=[tf.keras.metrics.CosineSimilarity()],
     )
 
@@ -582,7 +561,7 @@ def train_classifier(x_train, y_train, x_dev, y_dev, args):
     model = tf.keras.Model(inputs=model.input, outputs=get_decoder(args)(model.output))
     model.compile(
         loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
-        optimizer=tf.keras.optimizers.Adam(lr=args.lr),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr),
         metrics=[
             tf.keras.metrics.CategoricalAccuracy(name="accuracy"),
         ],
@@ -786,53 +765,21 @@ def run_pca(df, k=50):
     return df
 
 
-def create_folds(df, num_folds, split_str=None, groupkey="label"):
-    """create new columns in the df with the folds labeled
-    Args:
-        args (namespace): namespace object with input arguments
-        df (DataFrame): labels
-    """
+def prepare_data(args):
 
-    def stratify_split(df, num_folds, split_str=None):
-        # Extract only test folds
-        if split_str is None:
-            skf = KFold(n_splits=num_folds, shuffle=False)  # random_state=0)
-        elif split_str == "stratify":
-            skf = StratifiedKFold(n_splits=num_folds, shuffle=False)
-        elif split_str == "stratify_group":
-            skf = StratifiedGroupKFold(n_splits=num_folds, shuffle=False)
-        else:
-            raise Exception("wrong string")
+    base_pickle = os.path.join(args.label_dir, "base_df.pkl")
+    emb_pickle = os.path.join(
+        args.label_dir, f"cnxt_{args.context_len:04}", f"layer_{args.layer_idx:02}.pkl"
+    )
+    base_df = load_datum(base_pickle)
+    emb_df = load_datum(emb_pickle)
 
-        folds = [t[1] for t in skf.split(df, y=df.label, groups=df[groupkey])]
-        return folds
+    if len(emb_df) != len(base_df):
+        df = pd.merge(base_df, emb_df, left_index=True, right_index=True)
+    else:
+        base_df.reset_index(drop=False, inplace=True)
+        df = pd.concat([base_df, emb_df], axis=1)
 
-    # Get the folds
-    folds = stratify_split(df, num_folds, split_str=split_str)
-    # Ensure all folds are semi-equal sized [len(f) for f in folds]
-    # Ensure no groups cross folds
-    # [df.conversation_id.iloc[folds[i]].unique().tolist() for i in range(5)]
-
-    # Go through each fold, and split
-    fold_column_names = [f"fold{i}" for i in range(num_folds)]
-    for i, fold_col in enumerate(fold_column_names):
-        # Shift the number of folds for this iteration
-        # [0 1 2 3 4] -> [1 2 3 4 0] -> [2 3 4 0 1]
-        #                       ^ dev fold
-        #                         ^ test fold
-        #                 | - | <- train folds
-
-        folds_ixs = np.roll(folds, i, axis=0)
-        *_, dev_ixs, test_ixs = folds_ixs
-
-        df[fold_col] = "train"
-        df.loc[dev_ixs, fold_col] = "dev"
-        df.loc[test_ixs, fold_col] = "test"
-
-    return df
-
-
-def prepare_data(args, df):
     df["label"] = df.lemmatized_word.str.lower()
 
     # Clean up data
@@ -861,7 +808,7 @@ def prepare_data(args, df):
     freq_mask = df.word_freq_overall >= args.min_word_freq
     df = df[common & freq_mask & ~nonword_mask]
 
-    if "shift" in args.datum_mod:
+    if "shift-emb" in args.emb_mod:
         df = shift_emb(args, df)
 
     # Keep production or comprehension
@@ -933,8 +880,9 @@ if __name__ == "__main__":
     args = arg_parser()
 
     # Load data
-    signals, stitch_index, df = load_pickles(args)
-    df = prepare_data(args, df)  # prune
+    signals, stitch_index = load_pickles(args)
+    # df = prepare_data(args)
+    df = read_datum(args)
 
     # Run
     histories = []

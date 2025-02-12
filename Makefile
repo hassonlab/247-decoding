@@ -43,14 +43,18 @@ BC :=
 
 # SID := 676
 # BC := --bad-convos 38 39
+# BC :=
 
 # SID := 7170
-# # BC := --bad-convos 2 23 24
+# BC :=
+
+# SID := 798
 # BC :=
 
 # SIG_FN := --sig-elec-file data/717_21-conv-elec-189.csv
-# SIG_FN := --sig-elec-file data/tfs-sig-file-glove-625-comp.csv
 SIG_FN := 
+SIG_FN := --sig-elec-file data/tfs-sig-file-glove-625-comp.csv
+SIG_FN := --sig-elec-file data/tfs-sig-file-glove-625-prod.csv
 
 # SID := 777
 # SIG_FN := --sig-elec-file data/129-phase-5000-sig-elec-glove50d-perElec-FDR-01-LH.csv
@@ -72,18 +76,24 @@ CNTX = 1024
 LAYER_IDX = 48
 PCA := --pca 50
 
+# llama3
+# EMBN = Meta-Llama-3-8B
+# CNTX = 8192
+# LAYER_IDX = 00
+# PCA := --pca 50
+
 
 # Align with others
 ALIGN_WITH = --align-with gpt2-xl
-ALIGN_WITH = 
+ALIGN_WITH =
 
 # Minimum word frequency
 MWF := 0
 
 # Choose which modes to run for: production, comprehension, or both.
-MODES := prod
-MODES := prod comp
 MODES := comp
+MODES := prod comp
+MODES := prod
 
 # Running options
 # ---------------
@@ -105,13 +115,25 @@ LAGX := 1
 
 # Choose the lags to run for in ms
 # LAGS := $(shell yes "{-1024..1024..256}" | head -n $(LAGX) | tr '\n' ' ')
+LAGS = 750
+LAGS = $(shell seq -4000 250 4000)
 LAGS = 0
-LAGS = -2000 $(shell seq -1000 250 2000)
+
+# Choose whether to normalize the embeddings
+NM := l2
+# {l1 | l2 | max}
+
+# Embedding Modification
+EM := shift-emb
+EM := 
+EM := glove50
 
 # Datum Modification
-DM := shiftn1
+DM := improb
+DM := aligned-prob
+DM := prob
+DM := aligned-improb
 DM := all
-DM := shift
 
 # -----------------------------------------------------------------------------
 # Decoding
@@ -132,13 +154,16 @@ run-decoding:
 		--verbose 0 \
 		$(SIG_FN) \
 		$(ALIGN_WITH) \
+		--normalize $(NM)\
+		--emb-type $(EMBN) \
+		--emb-mod $(EM) \
 		--datum-mod $(DM) \
 	    --context-len $(CNTX) \
 	    --layer-idx $(LAYER_IDX) \
 	        $(PCA) \
 	        $(MODE) \
 	        $(MISC) \
-	        --model decoding-s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)-sig-$(DM); \
+	        --model decoding-s-$(SID)_e-$(NE)_t-$(MODN)_m-$${mode}_e-$(EMBN)_p-$(PARAMS)_mwf-$(MWF)-$(EM)-$(DM); \
 	done
 
 # In case you need to run the ensemble on its own
@@ -173,14 +198,13 @@ plot:
 	rm -f results/plots/*
 	mkdir -p results/plots/
 	python scripts/plot.py \
-	    --q "model == 'decoding-s-625_e-160_t-regress_m-prod_e-glove50_p-vsr_mwf-0-sig-all' and ensemble == True" \
-	    	"model == 'decoding-s-625_e-160_t-regress_m-comp_e-glove50_p-vsr_mwf-0-sig-all' and ensemble == True" \
-	    	"model == 'decoding-s-625_e-160_t-regress_m-prod_e-gpt2-xl_p-vsr_mwf-0-sig-shift' and ensemble == True" \
-	    	"model == 'decoding-s-625_e-160_t-regress_m-comp_e-gpt2-xl_p-vsr_mwf-0-sig-shift' and ensemble == True" \
-	    --labels prod-glove comp-glove prod-gpt2 comp-gpt2  \
+	    --q "model == 'decoding-s-625_e-160_t-regress_m-prod_e-gpt2-xl_p-vsr_mwf-0-glove50-all' and ensemble == True" \
+	    	"model == 'decoding-s-625_e-160_t-regress_m-prod_e-gpt2-xl_p-vsr_mwf-0-glove50-aligned-prob' and ensemble == True" \
+	    	"model == 'decoding-s-625_e-160_t-regress_m-prod_e-gpt2-xl_p-vsr_mwf-0-glove50-aligned-improb' and ensemble == True" \
+	    --labels all prob improb \
 	    --x lag \
 	    --y avg_test_nn_rocauc_test_w_avg \
-	    --output results/plots/625-new
+	    --output results/plots/625-new2
 	rsync -av results/plots/ ~/tigress/247-decoding-results/
 
 aggregate-results:

@@ -14,7 +14,7 @@ def plot(args):
     else:
         df = get_results()
 
-    NUM_COLORS = 16
+    NUM_COLORS = 5
     cm = plt.get_cmap("gist_rainbow")
     colors = [cm(1.0 * i / NUM_COLORS) for i in range(NUM_COLORS)]
     cmap = {}
@@ -25,6 +25,7 @@ def plot(args):
     for query, label in zip(args.q, args.labels):
         print(query, label)
         sub_df = df.query(query).sort_values(by=args.x)
+        breakpoint()
         x = sub_df[args.x]  # NOTE - hardcoded.
         y = sub_df[args.y]
         if "classify" in query:

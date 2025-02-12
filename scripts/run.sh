@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --time=3:10:00
-#SBATCH --mem=16GB
+#SBATCH --time=3:30:00
+#SBATCH --mem=30GB
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
@@ -15,8 +15,8 @@ then
 elif [[ "$HOSTNAME" == *"della"* ]]
 then
     echo "It's Della"
-    # module load anaconda3/2021.11
-    module load anaconda
+    module load anaconda3/2021.11
+    # module load anaconda
     module load cudatoolkit/12.0
     module load cudnn/cuda-11.x/8.2.0
     source activate /home/hgazula/.conda/envs/247-main-tf
